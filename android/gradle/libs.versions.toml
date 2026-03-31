@@ -1,0 +1,11 @@
+[versions]
+agp = "8.11.2"
+engage = "1.0.0-beta.02"
+kotlin = "2.0.21"
+
+[libraries]
+engage = { module = "tech.digia:engage", version.ref = "engage" }
+
+[plugins]
+android-library = { id = "com.android.library", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }

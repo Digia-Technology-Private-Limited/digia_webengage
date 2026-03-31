@@ -1,0 +1,58 @@
+# macOS
+.DS_Store
+*.DS_Store
+
+# Android
+*.iml
+.gradle/
+local.properties
+.idea/
+*.keystore
+!debug.keystore
+android/build/
+android/.cxx/
+
+# Flutter
+flutter/.dart_tool/
+flutter/.flutter-plugins
+flutter/.flutter-plugins-dependencies
+flutter/.pub-cache/
+flutter/.pub/
+flutter/build/
+flutter/example/.dart_tool/
+flutter/example/.flutter-plugins
+flutter/example/.flutter-plugins-dependencies
+flutter/example/build/
+
+# Dart
+*.dart.js
+*.dart.js.map
+*.dart.js.deps
+
+# iOS / Xcode
+*.xcworkspace
+!*.xcworkspace/contents.xcworkspacedata
+xcuserdata/
+*.xcuserstate
+Pods/
+DerivedData/
+
+# VS Code
+.vscode/
+
+# Local agent files
+.cursor/
+.claude/
+AGENTS.md
+CLAUDE.md
+
+# IntelliJ / Android Studio
+.idea/
+*.iml
+
+# Misc
+*.swp
+*.swo
+.env
+.env.*
+.build/
