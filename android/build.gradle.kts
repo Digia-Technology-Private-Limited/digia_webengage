@@ -30,13 +30,16 @@ android {
 }
 
 dependencies {
-    implementation("com.webengage:android-sdk:4.+")
-    implementation("com.webengage:we-personalization:1.+")
+    implementation(libs.webengage.sdk)
+    implementation(libs.webengage.personalization)
     implementation(libs.engage)
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
-    implementation("androidx.compose.runtime:runtime:1.7.6")
-    testImplementation("junit:junit:4.13.2")
-    testImplementation("org.mockito:mockito-core:5.12.0")
+    implementation(libs.coroutines)
+    implementation(libs.compose.runtime)
+    testImplementation(libs.junit)
+    testImplementation(libs.mockito)
+    // org.json is provided by android.jar at compile time but the Android stubs throw at runtime
+    // during JVM unit tests. The standalone artifact supplies the real implementation.
+    testImplementation("org.json:json:20231013")
 }
 
 afterEvaluate {
