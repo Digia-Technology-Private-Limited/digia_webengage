@@ -5,8 +5,8 @@ homepage: https://digia.tech
 version: 0.1.0
 
 environment:
-  sdk: '>=3.3.0 <4.0.0'
-  flutter: '>=3.20.0'
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.20.0"
 
 dependencies:
   digia_engage: ^1.1.0
@@ -18,7 +18,6 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  very_good_analysis: ^10.1.0
 
 topics:
   - webengage
@@ -28,3 +27,8 @@ topics:
 
 flutter:
   uses-material-design: true
+  plugin:
+    platforms:
+      android:
+        package: com.digia.engage.webengage
+        pluginClass: DigiaSuppressPlugin

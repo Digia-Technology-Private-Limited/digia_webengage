@@ -8,7 +8,8 @@ class WebEngagePayloadMapper {
   /// Maps a WE in-app notification data map (with injected `experimentId`)
   /// to a list of Digia [InAppPayload]s.
   ///
-  /// Produces one nudge payload when `command` and `viewId` are present.
+  /// Produces one inline payload when `type == "inline"`, or one nudge payload
+  /// when `command` and `viewId` are present.
   List<InAppPayload> map(Map<String, dynamic> data) {
     final normalized = _normalizeWithDigiaContract(data);
     final campaignId = _str(
@@ -26,12 +27,33 @@ class WebEngagePayloadMapper {
     final args = _normalizeArgs(normalized['args']);
     final payloads = <InAppPayload>[];
 
+    final type = _str(normalized['type'])?.toLowerCase();
     final command = _str(normalized['command'])?.toUpperCase();
-    final viewId = _str(normalized['viewId']);
-    if (command != null &&
-        command.isNotEmpty &&
-        viewId != null &&
-        viewId.isNotEmpty) {
+    final viewId = _str(normalized['viewId']) ?? '';
+    final variationId = _str(normalized['variationId']) ?? '';
+
+    if (type == 'inline') {
+      final placementKey = _str(normalized['placementKey']) ?? '';
+      if (placementKey.isNotEmpty && viewId.isNotEmpty) {
+        payloads.add(
+          InAppPayload(
+            id: campaignId,
+            content: <String, dynamic>{
+              'type': 'inline',
+              'screenId': screenId,
+              'placementKey': placementKey,
+              'componentId': viewId,
+              'args': args,
+            },
+            cepContext: <String, dynamic>{
+              'experimentId': campaignId,
+              'campaignId': campaignId,
+              if (variationId.isNotEmpty) 'variationId': variationId,
+            },
+          ),
+        );
+      }
+    } else if (command != null && command.isNotEmpty && viewId.isNotEmpty) {
       payloads.add(
         InAppPayload(
           id: campaignId,
@@ -58,23 +80,32 @@ class WebEngagePayloadMapper {
 
     final customData =
         Map<String, dynamic>.from(data.weCampaignContent?.customData ?? {});
-    if (customData.isEmpty) return null;
 
     final screenId =
         _str(customData['screenId'] ?? customData['screen_id']) ?? '';
     final componentId = _str(customData['componentId']) ?? '';
+    if (componentId.isEmpty) return null;
     final args = _normalizeArgs(customData['args']);
+
+    final metadata = data.weCampaignContent?.customData ?? {};
+    final variationId = _str(metadata['variationId']) ?? '';
+    final propertyId = _str(metadata['propertyId']) ?? targetViewId;
 
     return InAppPayload(
       id: '$campaignId:$targetViewId',
       content: <String, dynamic>{
-        'command': 'SHOW_INLINE',
+        'type': 'inline',
         'screenId': screenId,
         'placementKey': targetViewId,
         'componentId': componentId,
         'args': args,
       },
-      cepContext: <String, dynamic>{'campaignId': campaignId},
+      cepContext: <String, dynamic>{
+        'experimentId': campaignId,
+        'campaignId': campaignId,
+        'propertyId': propertyId,
+        if (variationId.isNotEmpty) 'variationId': variationId,
+      },
     );
   }
 
@@ -103,21 +134,35 @@ class WebEngagePayloadMapper {
     final topLevel = _parseContractFromMap(raw, source: 'top_level');
     if (topLevel != null) return <String, dynamic>{...raw, ...topLevel};
 
-    final scriptContract = _extractContractFromScript(raw);
-    if (scriptContract != null) {
-      return <String, dynamic>{...raw, ...scriptContract};
+    final htmlContract = _extractContractFromHtml(raw);
+    if (htmlContract != null) {
+      return <String, dynamic>{...raw, ...htmlContract};
     }
 
     return raw;
   }
 
-  Map<String, dynamic>? _extractContractFromScript(Map<String, dynamic> raw) {
+  Map<String, dynamic>? _extractContractFromHtml(Map<String, dynamic> raw) {
+    // Source 1: <digia> attribute-based tag (matches Android HtmlDigiaTagContractSource)
+    final digiaTagRegex = RegExp(
+      r'<digia\b([^/]*)/?>',
+      caseSensitive: false,
+    );
+    for (final text in _collectTextCandidates(raw)) {
+      for (final match in digiaTagRegex.allMatches(text)) {
+        final attrs = _parseHtmlAttributes(match.group(1) ?? '');
+        if (attrs.isEmpty) continue;
+        final contract = _parseContractFromMap(attrs, source: 'html_digia_tag');
+        if (contract != null) return contract;
+      }
+    }
+
+    // Source 2: <script digia-payload> tag (legacy)
     final scriptRegex = RegExp(
       '<script[^>]*digia-payload[^>]*>(.*?)</script>',
       caseSensitive: false,
       dotAll: true,
     );
-
     for (final text in _collectTextCandidates(raw)) {
       for (final match in scriptRegex.allMatches(text)) {
         final body = _htmlUnescape(match.group(1)?.trim() ?? '');
@@ -132,21 +177,47 @@ class WebEngagePayloadMapper {
     return null;
   }
 
+  /// Parses `key="value"` attribute pairs from HTML tag attribute string.
+  Map<String, dynamic> _parseHtmlAttributes(String attrsString) {
+    final result = <String, dynamic>{};
+    final attrRegex =
+        RegExp(r'''(\w[\w-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+)))?''');
+    for (final match in attrRegex.allMatches(attrsString)) {
+      final key = match.group(1) ?? '';
+      final value = match.group(2) ?? match.group(3) ?? match.group(4) ?? '';
+      if (key.isNotEmpty) result[key] = _htmlUnescape(value);
+    }
+    return result;
+  }
+
   Map<String, dynamic>? _parseContractFromMap(
     Map<String, dynamic> raw, {
     required String source,
   }) {
+    final type = _str(raw['type'])?.toLowerCase();
     final command = _normalizeCommand(_str(raw['command']));
+    final resolvedCommand = type == 'inline' ? null : command;
+
+    // At least one routing signal must exist
+    if (type == null && resolvedCommand == null) return null;
+
     final viewId = _str(raw['viewId']);
-    if (command == null || viewId == null) return null;
+    if (viewId == null) return null;
+
+    final placementKey = _str(raw['placementKey']);
+
+    // Inline requires placementKey
+    if (type == 'inline' && placementKey == null) return null;
 
     final screenId = _str(raw['screenId'] ?? raw['screen_id']);
     return <String, dynamic>{
-      'command': command,
+      if (type != null) 'type': type,
+      if (resolvedCommand != null) 'command': resolvedCommand,
       'viewId': viewId,
-      if (screenId != null) 'screenId': screenId,
       'args': _normalizeArgs(raw['args']),
       'digiaContractSource': source,
+      if (placementKey != null) 'placementKey': placementKey,
+      if (screenId != null) 'screenId': screenId,
     };
   }
 
