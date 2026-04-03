@@ -65,6 +65,10 @@ class WebEngageSdkBridge implements WebEngageBridge {
 
   _DigiaWECampaignCallback? _campaignCallback;
 
+  /// Tracks the experimentId of the last Digia in-app forwarded to the caller.
+  /// Deduplicates repeated native callbacks for the same active campaign.
+  String? _activeExperimentId;
+
   @override
   void registerCallbacks({
     required void Function(Map<String, dynamic> data) onInAppPrepared,
@@ -79,10 +83,16 @@ class WebEngageSdkBridge implements WebEngageBridge {
       switch (call.method) {
         case 'onInAppPrepared':
           final data = Map<String, dynamic>.from(call.arguments as Map);
+          final experimentId = data['experimentId'] as String?;
+          if (experimentId != null && experimentId == _activeExperimentId)
+            return;
+          _activeExperimentId = experimentId;
           onInAppPrepared(data);
         case 'onInAppDismissed':
           final data = Map<String, dynamic>.from(call.arguments as Map);
           final id = data['experimentId'] as String?;
+          if (id != null && id == _activeExperimentId)
+            _activeExperimentId = null;
           if (id != null) onInAppDismissed(id);
       }
     });
@@ -94,6 +104,7 @@ class WebEngageSdkBridge implements WebEngageBridge {
   @override
   void unregisterCallbacks() {
     _suppressChannel.setMethodCallHandler(null);
+    _activeExperimentId = null;
 
     // Replace the inline callback with the empty base class — there is no
     // deregisterWECampaignCallback on WEPersonalization in Flutter.
