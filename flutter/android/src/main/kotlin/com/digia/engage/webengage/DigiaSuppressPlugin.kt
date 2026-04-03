@@ -12,48 +12,49 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Flutter plugin that wires a native WebEngage [InAppNotificationCallbacks], suppresses WebEngage's
- * own in-app UI (`setShouldRender(false)`), and forwards campaign events to Dart via the
- * MethodChannel [CHANNEL].
+ * Flutter plugin that wires a native WebEngage [InAppNotificationCallbacks], identifies campaign
+ * type (Digia vs normal), and routes them accordingly:
+ *
+ * ```
+ * Native Layer (Android)
+ *     ↓
+ * onInAppNotificationPrepared() called
+ *     ↓
+ * isDigiaCampaign(data)?
+ *     ↓ YES                         ↓ NO
+ * setShouldRender(false)        allow SDK rendering (return as-is)
+ * send data → Flutter
+ * ```
+ *
+ * A campaign is "Digia" when its data contains a `viewId` key plus at least one routing signal
+ * (`type` or a known `command`), or when any HTML string in the data embeds a `<digia .../>`
+ * attribute tag or a `<script digia-payload>` block.
  *
  * Channel protocol (Android → Dart):
  * - "onInAppPrepared" → Map with all keys from [InAppNotificationData.getData] plus
  * ```
- *                          `"experimentId"` and `"variationId"`.
+ *                        `"experimentId"` and `"variationId"`.
  * ```
  * - "onInAppDismissed" → Map `{ "experimentId": String }`.
- *
- * On the Dart side, [WebEngageSdkBridge] listens on this channel when running on Android, replacing
- * the `webengage_flutter.setUpInAppCallbacks` approach that lacks the real experiment ID and cannot
- * suppress rendering.
  */
 class DigiaSuppressPlugin : FlutterPlugin {
 
     private var channel: MethodChannel? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    /**
-     * Whether to suppress WebEngage's own in-app renderer. Dart can toggle this at any time via a
-     * "configure" MethodCall with argument `{"suppressRendering": true/false}`.
-     */
-    @Volatile private var suppressRendering: Boolean = false
-
     private var inAppCallback: InAppNotificationCallbacks? = null
 
     companion object {
         const val CHANNEL = "plugins.digia.tech/webengage_suppress"
+
+        private val VALID_COMMANDS = setOf("SHOW_DIALOG", "SHOW_BOTTOM_SHEET")
     }
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(binding.binaryMessenger, CHANNEL)
         channel!!.setMethodCallHandler { call, result ->
-            when (call.method) {
-                "configure" -> {
-                    suppressRendering = call.argument<Boolean>("suppressRendering") ?: false
-                    result.success(null)
-                }
-                else -> result.notImplemented()
-            }
+            // `configure` is kept for API compatibility but suppression is now per-campaign.
+            result.success(null)
         }
         registerInAppCallback()
     }
@@ -75,15 +76,20 @@ class DigiaSuppressPlugin : FlutterPlugin {
                             context: Context,
                             inAppData: InAppNotificationData,
                     ): InAppNotificationData {
-                        if (suppressRendering) {
-                            inAppData.setShouldRender(false)
-                        }
-
+                        val rawData = jsonObjectToMap(inAppData.getData())
                         val payload: Map<String, Any?> = buildMap {
-                            putAll(jsonObjectToMap(inAppData.getData()))
+                            putAll(rawData)
                             put("experimentId", inAppData.getExperimentId())
                             put("variationId", inAppData.getVariationId())
                         }
+
+                        if (!isDigiaCampaign(payload)) {
+                            // Normal campaign → let WebEngage SDK render it.
+                            return inAppData
+                        }
+
+                        // Digia campaign → suppress WebEngage's own renderer.
+                        inAppData.setShouldRender(false)
 
                         // invokeMethod must run on the main thread when called from a
                         // WebEngage background worker.
@@ -115,6 +121,39 @@ class DigiaSuppressPlugin : FlutterPlugin {
         inAppCallback = callback
         WebEngage.registerInAppNotificationCallback(callback)
     }
+
+    // ── Campaign Type Identification ──────────────────────────────────────────
+
+    /**
+     * Returns true when [data] carries a Digia rendering contract.
+     *
+     * Mirrors Dart's `WebEngagePayloadMapper._normalizeWithDigiaContract`:
+     * 1. **Structured keys**: `viewId` present + at least one routing signal (`type` or `command`).
+     * 2. **Embedded HTML**: any string value contains `<digia` or `digia-payload`.
+     */
+    private fun isDigiaCampaign(data: Map<String, Any?>): Boolean =
+            hasDigiaContractKeys(data) || containsDigiaHtml(data)
+
+    private fun hasDigiaContractKeys(data: Map<String, Any?>): Boolean {
+        val viewId = (data["viewId"] as? String)?.trim() ?: return false
+        if (viewId.isEmpty()) return false
+
+        val type = (data["type"] as? String)?.lowercase()
+        val command = (data["command"] as? String)?.uppercase()
+
+        return type != null || command in VALID_COMMANDS
+    }
+
+    private fun containsDigiaHtml(node: Any?): Boolean =
+            when (node) {
+                is String -> {
+                    val lower = node.lowercase()
+                    "<digia" in lower || "digia-payload" in lower
+                }
+                is Map<*, *> -> node.values.any { containsDigiaHtml(it) }
+                is List<*> -> node.any { containsDigiaHtml(it) }
+                else -> false
+            }
 
     // ── JSON → Dart-compatible Map helpers ────────────────────────────────────
 

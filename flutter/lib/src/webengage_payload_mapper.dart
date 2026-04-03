@@ -178,16 +178,37 @@ class WebEngagePayloadMapper {
   }
 
   /// Parses `key="value"` attribute pairs from HTML tag attribute string.
+  /// Normalizes kebab-case / underscore_case attribute names to camelCase,
+  /// matching Android's `DigiaTagParser.mapAttributes` behaviour.
   Map<String, dynamic> _parseHtmlAttributes(String attrsString) {
     final result = <String, dynamic>{};
     final attrRegex =
         RegExp(r'''(\w[\w-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+)))?''');
     for (final match in attrRegex.allMatches(attrsString)) {
-      final key = match.group(1) ?? '';
+      final rawKey = match.group(1) ?? '';
       final value = match.group(2) ?? match.group(3) ?? match.group(4) ?? '';
-      if (key.isNotEmpty) result[key] = _htmlUnescape(value);
+      if (rawKey.isEmpty) continue;
+      final key = _normalizeAttrKey(rawKey);
+      result[key] = _htmlUnescape(value);
     }
     return result;
+  }
+
+  String _normalizeAttrKey(String key) {
+    switch (key) {
+      case 'view-id':
+      case 'view_id':
+        return 'viewId';
+      case 'placement-key':
+      case 'placement_key':
+      case 'placement':
+        return 'placementKey';
+      case 'screen-id':
+      case 'screen_id':
+        return 'screenId';
+      default:
+        return key;
+    }
   }
 
   Map<String, dynamic>? _parseContractFromMap(

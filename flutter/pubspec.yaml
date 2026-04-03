@@ -32,3 +32,5 @@ flutter:
       android:
         package: com.digia.engage.webengage
         pluginClass: DigiaSuppressPlugin
+      ios:
+        pluginClass: DigiaSuppressPlugin
