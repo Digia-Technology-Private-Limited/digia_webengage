@@ -1,6 +1,6 @@
 //
 //  DigiaSuppressPlugin.h
-//  digia_engage_webengage
+//  digia_webengage_plugin
 //
 
 #import <Flutter/Flutter.h>

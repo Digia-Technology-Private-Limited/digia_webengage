@@ -1,6 +1,6 @@
 //
 //  DigiaSuppressPlugin.m
-//  digia_engage_webengage
+//  digia_webengage_plugin
 //
 
 #import "DigiaSuppressPlugin.h"

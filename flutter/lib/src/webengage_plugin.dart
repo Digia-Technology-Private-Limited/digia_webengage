@@ -1,8 +1,8 @@
 import 'package:digia_engage/api/models/diagnostic_report.dart';
 import 'package:digia_engage/digia_engage.dart';
-import 'package:digia_engage_webengage/src/webengage_bridge.dart';
-import 'package:digia_engage_webengage/src/webengage_event_bridge.dart';
-import 'package:digia_engage_webengage/src/webengage_payload_mapper.dart';
+import 'package:digia_webengage_plugin/src/webengage_bridge.dart';
+import 'package:digia_webengage_plugin/src/webengage_event_bridge.dart';
+import 'package:digia_webengage_plugin/src/webengage_payload_mapper.dart';
 import 'package:we_personalization_flutter/we_personalization_flutter.dart';
 
 /// WebEngage CEP plugin implementation for Digia Flutter SDK.
@@ -15,9 +15,9 @@ import 'package:we_personalization_flutter/we_personalization_flutter.dart';
 /// Since the Digia backend is not yet available, [InAppPayload.id] is derived
 /// from WebEngage campaign identifiers so that the delegate can render
 /// directly without a CampaignStore lookup.
-class WebEngagePlugin implements DigiaCEPPlugin {
+class DigiaWebEngagePlugin implements DigiaCEPPlugin {
   /// Creates the WebEngage Digia CEP plugin.
-  WebEngagePlugin({
+  DigiaWebEngagePlugin({
     WebEngageBridge? bridge,
     WebEngagePayloadMapper? mapper,
   }) : this._(
@@ -25,7 +25,7 @@ class WebEngagePlugin implements DigiaCEPPlugin {
           mapper: mapper ?? WebEngagePayloadMapper(),
         );
 
-  WebEngagePlugin._({
+  DigiaWebEngagePlugin._({
     required WebEngageBridge bridge,
     required WebEngagePayloadMapper mapper,
   })  : _bridge = bridge,
@@ -94,7 +94,7 @@ class WebEngagePlugin implements DigiaCEPPlugin {
       issue: healthy ? null : 'webengage plugin not fully wired',
       resolution: healthy
           ? null
-          : 'Call Digia.register(WebEngagePlugin()) after Digia.initialize().',
+          : 'Call Digia.register(DigiaWebEngagePlugin()) after Digia.initialize().',
       metadata: <String, dynamic>{
         'identifier': identifier,
         'delegateAttached': delegateReady,

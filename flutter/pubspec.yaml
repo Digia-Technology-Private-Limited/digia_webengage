@@ -1,8 +1,8 @@
-name: digia_engage_webengage
+name: digia_webengage_plugin
 description: Digia Engage CEP plugin for WebEngage — bridges WebEngage in-app and personalization campaigns into Digia's rendering engine.
-repository: https://github.com/Digia-Technology-Private-Limited/digia_engage_webengage
+repository: https://github.com/Digia-Technology-Private-Limited/digia_engage_webengage/tree/main/flutter
 homepage: https://digia.tech
-version: 0.1.0
+version: 1.0.0-beta.1
 
 environment:
   sdk: ">=3.3.0 <4.0.0"

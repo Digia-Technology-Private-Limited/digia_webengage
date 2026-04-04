@@ -1,5 +1,5 @@
 import 'package:digia_engage/digia_engage.dart';
-import 'package:digia_engage_webengage/src/webengage_bridge.dart';
+import 'package:digia_webengage_plugin/src/webengage_bridge.dart';
 
 /// Forwards Digia lifecycle/screen events to WebEngage bridge methods.
 class WebEngageEventBridge {

@@ -1,5 +1,5 @@
 Pod::Spec.new do |s|
-  s.name             = 'digia_engage_webengage'
+  s.name             = 'digia_webengage_plugin'
   s.version          = '0.1.0'
   s.summary          = 'Digia Engage CEP plugin for WebEngage.'
   s.description      = <<-DESC
