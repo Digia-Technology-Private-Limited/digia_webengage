@@ -2,13 +2,15 @@ plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
     id("org.jetbrains.kotlin.plugin.compose") version "2.0.21"
+    id("com.vanniktech.maven.publish") version "0.29.0"
     id("maven-publish")
+    id("signing")
 }
 
-version = "0.1.0"
+version = "1.0.0-beta.1"
 
 android {
-    namespace = "com.digia.engage.webengage"
+    namespace = "com.digia.webengage"
     compileSdk = 36
 
     defaultConfig {
@@ -42,18 +44,14 @@ dependencies {
     testImplementation("org.json:json:20231013")
 }
 
-afterEvaluate {
-    publishing {
-        publications {
-            create<MavenPublication>("maven") {
-                from(components["release"])
-                groupId = "com.digia"
-                artifactId = "webengage"
-                version = version
-            }
-        }
-        repositories {
-            mavenLocal()
-        }
+
+val signingKeyId = findProperty("signingInMemoryKeyId") as String? ?: ""
+val signingPassword = findProperty("signingInMemoryKeyPassword") as String? ?: ""
+val keyFile = rootProject.file("private-key.asc")
+
+signing {
+    if (keyFile.exists()) {
+        useInMemoryPgpKeys(signingKeyId, keyFile.readText(), signingPassword)
+        sign(publishing.publications)
     }
 }

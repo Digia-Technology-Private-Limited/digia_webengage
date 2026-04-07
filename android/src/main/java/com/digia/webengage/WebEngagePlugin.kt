@@ -1,4 +1,4 @@
-package com.digia.engage.webengage
+package com.digia.webengage
 
 import android.util.Log
 import com.digia.engage.DiagnosticReport
@@ -6,13 +6,13 @@ import com.digia.engage.DigiaCEPDelegate
 import com.digia.engage.DigiaCEPPlugin
 import com.digia.engage.DigiaExperienceEvent
 import com.digia.engage.InAppPayload
-import com.digia.engage.webengage.bridge.WebEngageBridge
-import com.digia.engage.webengage.bridge.WebEngageSdkBridge
-import com.digia.engage.webengage.cache.IInAppDataCache
-import com.digia.engage.webengage.cache.InAppDataCache
-import com.digia.engage.webengage.config.WebEngagePluginConfig
-import com.digia.engage.webengage.dispatch.WebEngageEventDispatcher
-import com.digia.engage.webengage.mapping.WebEngagePayloadMapper
+import com.digia.webengage.bridge.WebEngageBridge
+import com.digia.webengage.bridge.WebEngageSdkBridge
+import com.digia.webengage.cache.IInAppDataCache
+import com.digia.webengage.cache.InAppDataCache
+import com.digia.webengage.config.WebEngagePluginConfig
+import com.digia.webengage.dispatch.WebEngageEventDispatcher
+import com.digia.webengage.mapping.WebEngagePayloadMapper
 import java.lang.ref.WeakReference
 
 /**

@@ -1,9 +1,9 @@
-package com.digia.engage.webengage.mapping
+package com.digia.webengage.mapping
 
 import android.util.Log
 import com.digia.engage.InAppPayload
-import com.digia.engage.webengage.config.SuppressionMode
-import com.digia.engage.webengage.config.WebEngagePluginConfig
+import com.digia.webengage.config.SuppressionMode
+import com.digia.webengage.config.WebEngagePluginConfig
 
 internal open class WebEngagePayloadMapper(
         private val config: WebEngagePluginConfig = WebEngagePluginConfig(),

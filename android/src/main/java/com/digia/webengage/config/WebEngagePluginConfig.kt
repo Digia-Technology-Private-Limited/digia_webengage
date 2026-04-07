@@ -1,9 +1,9 @@
-package com.digia.engage.webengage.config
+package com.digia.webengage.config
 
 enum class SuppressionMode {
-    PASS_THROUGH,
-    SUPPRESS_ALL,
-    SUPPRESS_DIGIA_ONLY,
+        PASS_THROUGH,
+        SUPPRESS_ALL,
+        SUPPRESS_DIGIA_ONLY,
 }
 
 data class WebEngagePluginConfig(
@@ -17,7 +17,7 @@ internal fun shouldSuppressInAppRendering(
         isDigiaCampaign: Boolean,
 ): Boolean =
         when (mode) {
-            SuppressionMode.PASS_THROUGH -> false
-            SuppressionMode.SUPPRESS_ALL -> true
-            SuppressionMode.SUPPRESS_DIGIA_ONLY -> isDigiaCampaign
+                SuppressionMode.PASS_THROUGH -> false
+                SuppressionMode.SUPPRESS_ALL -> true
+                SuppressionMode.SUPPRESS_DIGIA_ONLY -> isDigiaCampaign
         }

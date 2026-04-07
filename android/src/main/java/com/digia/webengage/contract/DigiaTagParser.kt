@@ -1,4 +1,4 @@
-package com.digia.engage.webengage.contract
+package com.digia.webengage.contract
 
 import org.json.JSONArray
 import org.json.JSONObject

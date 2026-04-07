@@ -1,19 +1,20 @@
-package com.digia.engage.webengage.bridge
+package com.digia.webengage.bridge
 
 import android.content.Context
 import android.util.Log
-import com.digia.engage.webengage.cache.IInAppDataCache
-import com.digia.engage.webengage.cache.InAppDataCache
-import com.digia.engage.webengage.config.SuppressionMode
-import com.digia.engage.webengage.config.WebEngagePluginConfig
-import com.digia.engage.webengage.config.shouldSuppressInAppRendering
-import com.digia.engage.webengage.contract.normalizeWithDigiaContract
+import com.digia.webengage.cache.IInAppDataCache
+import com.digia.webengage.cache.InAppDataCache
+import com.digia.webengage.config.SuppressionMode
+import com.digia.webengage.config.WebEngagePluginConfig
+import com.digia.webengage.config.shouldSuppressInAppRendering
+import com.digia.webengage.contract.normalizeWithDigiaContract
 import com.webengage.personalization.WEPersonalization
 import com.webengage.personalization.callbacks.WECampaignCallback
 import com.webengage.personalization.data.WECampaignData
 import com.webengage.sdk.android.WebEngage
 import com.webengage.sdk.android.actions.render.InAppNotificationData
 import com.webengage.sdk.android.callbacks.InAppNotificationCallbacks
+import java.util.concurrent.ConcurrentHashMap
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -43,6 +44,10 @@ internal interface WebEngageBridge {
     fun unregisterInlineListener()
     fun navigateScreen(name: String)
     fun isAvailable(): Boolean
+    /**
+     * Releases the plugin-level gate for [experimentId], allowing it to show again next session.
+     */
+    fun releaseCampaignGate(experimentId: String)
 }
 
 internal class WebEngageSdkBridge(
@@ -52,6 +57,10 @@ internal class WebEngageSdkBridge(
 
     private var inAppCallback: InAppNotificationCallbacks? = null
     private var campaignCallback: WECampaignCallback? = null
+    // Plugin-level gate: tracks experimentIds whose Digia sheet is currently active.
+    // .add() is a CAS-like atomic op — returns false if the ID is already present.
+    // Cleared on dismiss (releaseCampaignGate) and on listener unregister.
+    private val activeDigiaCampaignIds = ConcurrentHashMap.newKeySet<String>()
 
     override fun registerInAppListener(
             onPayload: (Map<String, Any?>) -> Unit,
@@ -105,10 +114,20 @@ internal class WebEngageSdkBridge(
                             )
                             return inAppData
                         }
+                        // Plugin-level gate: if this experimentId already has an active Digia
+                        // sheet, block the duplicate dispatch without sending another onPayload.
+                        // activeDigiaCampaignIds.add() is atomic — returns false when the ID
+                        // was already present. Gate is released when Dismissed fires via
+                        // releaseCampaignGate(), matching WE's entity_is_running pattern.
+                        if (experimentId.isNotBlank() && !activeDigiaCampaignIds.add(experimentId)
+                        ) {
+                            logDebug(
+                                    "inapp_prepared gate_blocked exp=$experimentId reason=already_active"
+                            )
+                            return inAppData
+                        }
                         // Cache the original SDK data object so WebEngageEventDispatcher can
-                        // resolve
-                        // experimentId/variationId directly from it — mirrors MoEngage's
-                        // CampaignCache.
+                        // resolve experimentId/variationId directly from it.
                         if (experimentId.isNotBlank()) {
                             dataCache.put(experimentId, inAppData)
                             logDebug("inapp_data_cached exp=$experimentId")
@@ -153,7 +172,13 @@ internal class WebEngageSdkBridge(
                                 "inapp_dismissed exp=${id.orEmpty()} " +
                                         "layout=${inAppData.layoutId.orEmpty()} variation=${inAppData.variationId.orEmpty()}",
                         )
-                        if (id != null) onInvalidate(id)
+                        if (id != null) {
+                            // Gate is released here for WE-native campaigns that reach this
+                            // callback; for Digia campaigns releaseCampaignGate() is called
+                            // from the dispatcher's Dismissed handler instead.
+                            activeDigiaCampaignIds.remove(id)
+                            onInvalidate(id)
+                        }
                     }
                 }
         logDebug("register_inapp_listener mode=${config.suppressionMode}")
@@ -242,10 +267,16 @@ internal class WebEngageSdkBridge(
                 )
     }
 
+    override fun releaseCampaignGate(experimentId: String) {
+        activeDigiaCampaignIds.remove(experimentId)
+        logDebug("campaign_gate_released exp=$experimentId")
+    }
+
     override fun unregisterInAppListener() {
         logDebug("unregister_inapp_listener")
         WebEngage.unregisterInAppNotificationCallback(inAppCallback)
         inAppCallback = null
+        activeDigiaCampaignIds.clear()
     }
 
     override fun unregisterInlineListener() {

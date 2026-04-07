@@ -1,10 +1,11 @@
-package com.digia.engage.webengage.dispatch
+package com.digia.webengage.dispatch
 
 import android.util.Log
 import com.digia.engage.DigiaExperienceEvent
 import com.digia.engage.InAppPayload
-import com.digia.engage.webengage.bridge.WebEngageBridge
-import com.digia.engage.webengage.cache.IInAppDataCache
+import com.digia.webengage.bridge.WebEngageBridge
+import com.digia.webengage.cache.IInAppDataCache
+import com.webengage.sdk.android.actions.database.DataHolder
 
 /**
  * Dispatches [DigiaExperienceEvent]s to the corresponding WebEngage analytics system-event APIs.
@@ -80,6 +81,38 @@ internal class WebEngageEventDispatcher(
                                 ?: payload.cepContext.string("campaignId")
                                         ?: payload.id.substringBefore(':', payload.id)
 
+                // Mirrors the WE Fragment (n.java) dismiss flow:
+                //   1. releaseCampaignGate  — opens the plugin-level gate for next session
+                //   2. DataHolder.c(false)  — releases entity_is_running (parity with n.java)
+                //   3. notification_close   — fires the WE system event at actual dismiss time
+                //   4. cache eviction       — frees the cached InAppNotificationData
+                if (event is DigiaExperienceEvent.Dismissed) {
+                        val cachedData = cache.get(experimentId)
+                        val weExperimentId =
+                                cachedData?.experimentId?.takeIf { it.isNotBlank() } ?: experimentId
+                        val weVariationId =
+                                cachedData?.variationId?.takeIf { it.isNotBlank() }
+                                        ?: payload.cepContext.string("variationId") ?: payload.id
+                        bridge.releaseCampaignGate(experimentId)
+                        runCatching { DataHolder.get().c(false) }
+                        bridge.trackSystemEvent(
+                                eventName = "notification_close",
+                                systemData =
+                                        mapOf(
+                                                "experiment_id" to weExperimentId,
+                                                "id" to weVariationId,
+                                        ),
+                        )
+                        cache.remove(experimentId)
+                        runCatching {
+                                Log.v(
+                                        TAG,
+                                        "dismissed: notification_close — experimentId=$experimentId"
+                                )
+                        }
+                        return true
+                }
+
                 // Primary source: cached InAppNotificationData populated in
                 // onInAppNotificationPrepared.
                 // Fallback: cepContext (used in tests and if cache was evicted before event fires).
@@ -94,12 +127,8 @@ internal class WebEngageEventDispatcher(
                         when (event) {
                                 DigiaExperienceEvent.Impressed -> "notification_view"
                                 is DigiaExperienceEvent.Clicked -> "notification_click"
-                                // WE SDK uses "notification_close" internally
-                                // (WebEngageConstant.NOTIFICATION_CLOSE
-                                // → EventName.NOTIFICATION_CLOSE). "notification_dismiss" is not a
-                                // WE system
-                                // event.
-                                DigiaExperienceEvent.Dismissed -> "notification_close"
+                                DigiaExperienceEvent.Dismissed ->
+                                        error("unreachable: Dismissed handled above")
                         }
 
                 val systemData =
@@ -122,21 +151,7 @@ internal class WebEngageEventDispatcher(
                         eventData = emptyMap(),
                 )
 
-                if (event is DigiaExperienceEvent.Dismissed) {
-                        // Campaign lifecycle complete — evict to free memory, mirroring MoEngage's
-                        // cache.remove().
-                        cache.remove(experimentId)
-                        runCatching {
-                                Log.v(
-                                        TAG,
-                                        "dispatched: $eventName — experimentId=$experimentId (evicted from cache)"
-                                )
-                        }
-                } else {
-                        runCatching {
-                                Log.v(TAG, "dispatched: $eventName — experimentId=$experimentId")
-                        }
-                }
+                runCatching { Log.v(TAG, "dispatched: $eventName — experimentId=$experimentId") }
 
                 return true
         }

@@ -1,4 +1,4 @@
-package com.digia.engage.webengage.cache
+package com.digia.webengage.cache
 
 import com.webengage.sdk.android.actions.render.InAppNotificationData
 
