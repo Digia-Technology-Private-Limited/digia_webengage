@@ -1,4 +1,4 @@
-group 'com.digia.engage.webengage'
+group 'com.digia.webengage'
 version '0.1.0'
 
 buildscript {

@@ -34,6 +34,22 @@ abstract class WebEngageBridge {
 
   /// Returns whether the underlying WebEngage SDK bridge is available.
   bool isAvailable();
+
+  /// Triggers the dismiss flow for a campaign from the Dart side.
+  ///
+  /// Mirrors the logic of an `onInAppDismissed` MethodChannel message and calls
+  /// through to the [onInAppDismissed] callback registered via [registerCallbacks].
+  ///
+  /// Must be called when the custom Digia UI is dismissed, because WebEngage
+  /// never fires its native dismiss callback for suppressed campaigns.
+  ///
+  /// **Gate behaviour**: the gate entry for [campaignId] is released after a
+  /// short delay ([_gateReleaseDelay]) rather than immediately. This absorbs
+  /// the async echo re-evaluation that `notification_close` triggers in
+  /// WebEngage (`notification_close` → `eventRuleCode` → `onInAppPrepared`).
+  /// After the delay the gate opens so the campaign can show again in a future
+  /// session if WE frequency rules permit.
+  void notifyDismissed(String campaignId);
 }
 
 /// Production [WebEngageBridge] backed by `webengage_flutter` and
@@ -44,9 +60,15 @@ abstract class WebEngageBridge {
 /// forwards `onInAppPrepared` / `onInAppDismissed` to Dart via the
 /// `plugins.digia.tech/webengage_suppress` MethodChannel.
 ///
-/// Deduplication (ignoring repeated `onInAppPrepared` callbacks for the same
-/// active campaign) is performed in the native plugin on both platforms so no
-/// extra state is needed here.
+/// A Dart-side plugin gate ([_activeExperimentIds]) mirrors the Android
+/// `ConcurrentHashMap` gate, blocking duplicate `onInAppPrepared` callbacks
+/// for campaigns that are already active.
+///
+/// Gate lifecycle:
+/// - Closed on first `onInAppPrepared` for an experimentId.
+/// - Released with a short delay after `notifyDismissed` to absorb the async
+///   echo re-evaluation that `notification_close` triggers in WebEngage.
+/// - Also cleared fully on `unregisterCallbacks` (session/plugin teardown).
 class WebEngageSdkBridge implements WebEngageBridge {
   /// Creates a production bridge backed by `webengage_flutter`.
   ///
@@ -65,9 +87,18 @@ class WebEngageSdkBridge implements WebEngageBridge {
 
   _DigiaWECampaignCallback? _campaignCallback;
 
-  /// Tracks the experimentId of the last Digia in-app forwarded to the caller.
-  /// Deduplicates repeated native callbacks for the same active campaign.
-  String? _activeExperimentId;
+  // Plugin-level gate: tracks experimentIds whose Digia sheet is currently active.
+  // .add() returns false if the ID is already present (duplicate fire) → block.
+  // Released with a short delay after dismiss to absorb the async echo re-evaluation
+  // that notification_close triggers. Cleared fully on unregisterCallbacks.
+  final _activeExperimentIds = <String>{};
+
+  // How long to keep the gate closed after dismiss to absorb the WE echo
+  // re-evaluation. notification_close → eventRuleCode → onInAppPrepared arrives
+  // within milliseconds; 3 s is a generous safety window.
+  static const _gateReleaseDelay = Duration(seconds: 2);
+
+  void Function(String)? _onInAppDismissed;
 
   @override
   void registerCallbacks({
@@ -79,20 +110,21 @@ class WebEngageSdkBridge implements WebEngageBridge {
     //   - Digia campaigns  → suppressed + forwarded here via this channel.
     //   - Normal campaigns → WebEngage SDK renders them; not forwarded here.
     // No global suppressRendering toggle is needed.
+    _onInAppDismissed = onInAppDismissed;
     _suppressChannel.setMethodCallHandler((call) async {
       switch (call.method) {
         case 'onInAppPrepared':
           final data = Map<String, dynamic>.from(call.arguments as Map);
           final experimentId = data['experimentId'] as String?;
-          if (experimentId != null && experimentId == _activeExperimentId)
+          // Gate check: .add() returns false when already present → duplicate, block.
+          if (experimentId != null && !_activeExperimentIds.add(experimentId))
             return;
-          _activeExperimentId = experimentId;
           onInAppPrepared(data);
         case 'onInAppDismissed':
           final data = Map<String, dynamic>.from(call.arguments as Map);
           final id = data['experimentId'] as String?;
-          if (id != null && id == _activeExperimentId)
-            _activeExperimentId = null;
+          // For WE-native campaigns the native dismiss fires here — release immediately.
+          if (id != null) _activeExperimentIds.remove(id);
           if (id != null) onInAppDismissed(id);
       }
     });
@@ -104,7 +136,8 @@ class WebEngageSdkBridge implements WebEngageBridge {
   @override
   void unregisterCallbacks() {
     _suppressChannel.setMethodCallHandler(null);
-    _activeExperimentId = null;
+    _activeExperimentIds.clear();
+    _onInAppDismissed = null;
 
     // Replace the inline callback with the empty base class — there is no
     // deregisterWECampaignCallback on WEPersonalization in Flutter.
@@ -132,6 +165,18 @@ class WebEngageSdkBridge implements WebEngageBridge {
 
   @override
   bool isAvailable() => true;
+
+  @override
+  void notifyDismissed(String campaignId) {
+    if (campaignId.isEmpty) return;
+    _onInAppDismissed?.call(campaignId);
+    // Release the gate after a short delay to absorb the async echo re-evaluation
+    // that notification_close triggers (notification_close → eventRuleCode →
+    // onInAppPrepared arrives within milliseconds). After the delay the campaign
+    // can show again in a future session per WE frequency rules.
+    Future.delayed(
+        _gateReleaseDelay, () => _activeExperimentIds.remove(campaignId));
+  }
 }
 
 /// Minimal [WECampaignCallback] subclass that forwards [onCampaignPrepared]

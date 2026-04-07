@@ -76,6 +76,15 @@ class DigiaWebEngagePlugin implements DigiaCEPPlugin {
   @override
   void notifyEvent(DigiaExperienceEvent event, InAppPayload payload) {
     _events.notifyEvent(event, payload);
+    // WebEngage only fires its native dismiss callback when its own UI is closed.
+    // Digia campaigns suppress WebEngage rendering, so the dismiss callback
+    // never arrives from the native layer. Drive it from the Dart event instead.
+    if (event is ExperienceDismissed) {
+      final type = payload.content['type'] as String?;
+      // notifyDismissed mirrors the 'onInAppDismissed' channel handler:
+      // clears the active-campaign guard and calls through to _handleInAppDismissed.
+      if (type != 'inline') _bridge.notifyDismissed(payload.id);
+    }
   }
 
   @override

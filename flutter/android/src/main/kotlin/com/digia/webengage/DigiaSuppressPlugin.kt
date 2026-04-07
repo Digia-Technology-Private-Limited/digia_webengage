@@ -1,4 +1,4 @@
-package com.digia.engage.webengage
+package com.digia.webengage
 
 import android.content.Context
 import android.os.Handler

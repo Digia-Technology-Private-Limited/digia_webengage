@@ -30,7 +30,7 @@ flutter:
   plugin:
     platforms:
       android:
-        package: com.digia.engage.webengage
+        package: com.digia.webengage
         pluginClass: DigiaSuppressPlugin
       ios:
         pluginClass: DigiaSuppressPlugin
