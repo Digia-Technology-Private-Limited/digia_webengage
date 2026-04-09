@@ -110,12 +110,18 @@ class DigiaSuppressModule(
                         val experimentId2 = inAppData.getExperimentId()
                         if (!isDigiaCampaign(payload)) {
                             // Normal campaign → let WebEngage render natively.
-                            Log.d(TAG, "onPrepared — NON-Digia campaign, experimentId=$experimentId2 — letting WE render")
+                            Log.d(
+                                    TAG,
+                                    "onPrepared — NON-Digia campaign, experimentId=$experimentId2 — letting WE render"
+                            )
                             return inAppData
                         }
 
                         // Digia campaign → suppress WebEngage's own renderer.
-                        Log.d(TAG, "onPrepared — Digia campaign, experimentId=$experimentId2 — suppressing WE render, emitting $EVENT_PREPARED")
+                        Log.d(
+                                TAG,
+                                "onPrepared — Digia campaign, experimentId=$experimentId2 — suppressing WE render, emitting $EVENT_PREPARED"
+                        )
                         inAppData.setShouldRender(false)
 
                         // Capture the plain Kotlin map here (thread-safe), then create
@@ -128,13 +134,17 @@ class DigiaSuppressModule(
                                 val params = mapToWritableMap(payloadSnapshot)
                                 reactContext
                                         .getJSModule(
-                                                DeviceEventManagerModule.RCTDeviceEventEmitter::class
+                                                DeviceEventManagerModule
+                                                                .RCTDeviceEventEmitter::class
                                                         .java
                                         )
                                         .emit(EVENT_PREPARED, params)
                                 Log.d(TAG, "onPrepared — emitted $EVENT_PREPARED to JS")
                             } catch (e: Exception) {
-                                Log.e(TAG, "onPrepared — failed to emit $EVENT_PREPARED: ${e.message}")
+                                Log.e(
+                                        TAG,
+                                        "onPrepared — failed to emit $EVENT_PREPARED: ${e.message}"
+                                )
                             }
                         }
                         return inAppData
@@ -165,13 +175,17 @@ class DigiaSuppressModule(
                                         }
                                 reactContext
                                         .getJSModule(
-                                                DeviceEventManagerModule.RCTDeviceEventEmitter::class
+                                                DeviceEventManagerModule
+                                                                .RCTDeviceEventEmitter::class
                                                         .java
                                         )
                                         .emit(EVENT_DISMISSED, params)
                                 Log.d(TAG, "onDismissed — emitted $EVENT_DISMISSED to JS")
                             } catch (e: Exception) {
-                                Log.e(TAG, "onDismissed — failed to emit $EVENT_DISMISSED: ${e.message}")
+                                Log.e(
+                                        TAG,
+                                        "onDismissed — failed to emit $EVENT_DISMISSED: ${e.message}"
+                                )
                             }
                         }
                     }
