@@ -1,5 +1,5 @@
 import WebEngagePlugin from 'react-native-webengage';
-import { NativeModules, NativeEventEmitter } from 'react-native';
+import { NativeModules, DeviceEventEmitter } from 'react-native';
 import { parseContractFromMap, extractContractFromHtml } from './WebEngagePayloadMapper';
 
 // ─── Abstract interface ───────────────────────────────────────────────────────
@@ -84,7 +84,6 @@ const EVENT_DISMISSED = 'weDigiaInAppDismissed';
  */
 export class WebEngageSdkBridge implements WebEngageBridge {
     private _weInstance: InstanceType<typeof WebEngagePlugin>;
-    private _emitter: NativeEventEmitter | null = null;
     private _prepareSubscription: { remove(): void } | null = null;
     private _dismissSubscription: { remove(): void } | null = null;
 
@@ -115,10 +114,12 @@ export class WebEngageSdkBridge implements WebEngageBridge {
         // Activate the native module's listener count tracking.
         nativeModule.install?.();
 
-        this._emitter = new NativeEventEmitter(nativeModule);
-        console.log('[DigiaBridge] NativeEventEmitter created, subscribing to', EVENT_PREPARED);
+        // Use DeviceEventEmitter directly — on Android, NativeEventEmitter is a
+        // thin wrapper over DeviceEventEmitter. Using it directly avoids any
+        // wrapper-layer delivery issues.
+        console.log('[DigiaBridge] Subscribing to', EVENT_PREPARED, 'via DeviceEventEmitter');
 
-        this._prepareSubscription = this._emitter.addListener(
+        this._prepareSubscription = DeviceEventEmitter.addListener(
             EVENT_PREPARED,
             (data: Record<string, unknown>) => {
                 console.log('[DigiaBridge] Received', EVENT_PREPARED, JSON.stringify(data));
@@ -127,9 +128,10 @@ export class WebEngageSdkBridge implements WebEngageBridge {
             },
         );
 
-        this._dismissSubscription = this._emitter.addListener(
+        this._dismissSubscription = DeviceEventEmitter.addListener(
             EVENT_DISMISSED,
             (data: Record<string, unknown>) => {
+                console.log('[DigiaBridge] Received', EVENT_DISMISSED, JSON.stringify(data));
                 const id = data?.experimentId;
                 if (typeof id === 'string' && id.length > 0) {
                     callbacks.onInAppDismissed(id);
@@ -143,7 +145,6 @@ export class WebEngageSdkBridge implements WebEngageBridge {
         this._dismissSubscription?.remove();
         this._prepareSubscription = null;
         this._dismissSubscription = null;
-        this._emitter = null;
     }
 
     navigateScreen(name: string): void {
