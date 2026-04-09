@@ -1,8 +1,10 @@
-import WebEngage from 'webengage-react-native';
+import WebEngagePlugin from 'react-native-webengage';
+import { NativeModules, NativeEventEmitter } from 'react-native';
+import { parseContractFromMap, extractContractFromHtml } from './WebEngagePayloadMapper';
 
 // ─── Abstract interface ───────────────────────────────────────────────────────
 
-/** Raw in-app notification data as received from the WebEngage React Native SDK. */
+/** Raw in-app notification data as received from the native suppress module. */
 export type WEInAppData = Record<string, unknown>;
 
 /**
@@ -15,15 +17,20 @@ export interface WebEngageBridge {
     /**
      * Registers in-app notification callbacks.
      *
-     * [onInAppPrepared] is called with the raw campaign data map before the
-     * native WebEngage UI is shown.
+     * [onInAppPrepared] is called **only for Digia campaigns** — detected and
+     * suppressed at the native layer by `DigiaSuppressModule` (Android) /
+     * `WEDigiaSuppressModule` (iOS), which mirror Flutter's `DigiaSuppressPlugin`:
      *
-     * [onInAppDismissed] is called with the same data map when the in-app is
-     * dismissed. The bridge is responsible for correlating the campaign ID.
+     * ```
+     *   Native: onInAppNotificationPrepared()
+     *       ↓
+     *   isDigiaCampaign?
+     *       YES → setShouldRender(false) → emit "weDigiaInAppPrepared" → JS
+     *       NO  → WebEngage renders natively (JS not involved)
+     * ```
      *
-     * NOTE: `webengage-react-native` does not expose a way to suppress the
-     * native in-app rendering from JavaScript. The native `shouldRender(false)`
-     * equivalent must be wired separately at the Android/iOS layer if needed.
+     * [onInAppDismissed] is called with the campaign's experimentId when the
+     * in-app is dismissed.
      */
     registerCallbacks(callbacks: {
         onInAppPrepared: (data: WEInAppData) => void;
@@ -53,64 +60,94 @@ export interface WebEngageBridge {
     isAvailable(): boolean;
 }
 
+// ─── Event names emitted by the native DigiaSuppressModule ───────────────────
+
+const EVENT_PREPARED = 'weDigiaInAppPrepared';
+const EVENT_DISMISSED = 'weDigiaInAppDismissed';
+
 // ─── Production implementation ────────────────────────────────────────────────
 
 /**
- * Production [WebEngageBridge] backed by `webengage-react-native`.
+ * Production [WebEngageBridge] backed by the native `DigiaSuppressModule`
+ * (Android) and `WEDigiaSuppressModule` (iOS).
  *
- * The `webengage-react-native` SDK does not expose `InAppNotificationData`
- * (the native object) to JavaScript, so rendering suppression must be
- * handled at the native layer separately.
+ * Suppression flow (identical to Flutter's `DigiaSuppressPlugin`):
+ *   1. The native module intercepts every `onInAppNotificationPrepared` callback.
+ *   2. It identifies the campaign type using the same `isDigiaCampaign` logic
+ *      as the Android bridge and Flutter plugin.
+ *   3. Digia campaigns: `setShouldRender(false)` / `*stopRendering = YES` is
+ *      called natively, then the payload is emitted to JS as `weDigiaInAppPrepared`.
+ *   4. Non-Digia campaigns: WebEngage renders them natively; JS is not involved.
+ *
+ * The `react-native-webengage` instance is kept only for screen navigation and
+ * event tracking — its `onPrepare` / `onDismiss` callbacks are no longer used.
  */
 export class WebEngageSdkBridge implements WebEngageBridge {
+    private _weInstance: InstanceType<typeof WebEngagePlugin>;
+    private _emitter: NativeEventEmitter | null = null;
+    private _prepareSubscription: { remove(): void } | null = null;
+    private _dismissSubscription: { remove(): void } | null = null;
+
     /**
-     * Monotonically-increasing counter for generating stable per-session IDs.
-     * The React Native SDK does not expose the underlying experiment ID in all
-     * callback paths, so we synthesise one.
+     * @param weInstance - Optional existing WebEngagePlugin instance to reuse.
+     *   Pass the same instance used for user/analytics calls to avoid
+     *   registering duplicate native event listeners.
      */
-    private _counter = 0;
-    private _activeInAppId: string | null = null;
+    constructor(weInstance?: InstanceType<typeof WebEngagePlugin>) {
+        this._weInstance = weInstance ?? new WebEngagePlugin();
+    }
 
     registerCallbacks(callbacks: {
         onInAppPrepared: (data: WEInAppData) => void;
         onInAppDismissed: (campaignId: string) => void;
     }): void {
-        WebEngage.setUpInAppCallbacks(
-            // onInAppShown — not used
-            null,
-            // onInAppDismissed
-            (_data: unknown) => {
-                const id = this._activeInAppId;
-                this._activeInAppId = null;
-                if (id != null) callbacks.onInAppDismissed(id);
-            },
-            // onInAppClicked — not used
-            null,
-            // onInAppPrepared
-            (data: unknown) => {
+        const nativeModule = NativeModules.DigiaSuppressModule;
+        console.log('[DigiaBridge] DigiaSuppressModule available:', !!nativeModule);
+        if (!nativeModule) {
+            // Native module not linked — fall back to react-native-webengage events
+            // so the JS-only filter path still works (no native suppression, but
+            // Digia campaigns are still forwarded).
+            console.log('[DigiaBridge] Falling back to react-native-webengage callbacks');
+            this._registerFallbackCallbacks(callbacks);
+            return;
+        }
+
+        // Activate the native module's listener count tracking.
+        nativeModule.install?.();
+
+        this._emitter = new NativeEventEmitter(nativeModule);
+        console.log('[DigiaBridge] NativeEventEmitter created, subscribing to', EVENT_PREPARED);
+
+        this._prepareSubscription = this._emitter.addListener(
+            EVENT_PREPARED,
+            (data: Record<string, unknown>) => {
+                console.log('[DigiaBridge] Received', EVENT_PREPARED, JSON.stringify(data));
                 if (data == null) return;
-                this._counter++;
-                const id = `we_inapp_${this._counter}`;
-                this._activeInAppId = id;
-                // Inject a stable experimentId so the mapper and delegate have a
-                // correlatable campaign ID without requiring Digia backend support.
-                const enriched: WEInAppData = {
-                    ...(data as Record<string, unknown>),
-                    experimentId: id,
-                };
-                callbacks.onInAppPrepared(enriched);
+                callbacks.onInAppPrepared(data);
+            },
+        );
+
+        this._dismissSubscription = this._emitter.addListener(
+            EVENT_DISMISSED,
+            (data: Record<string, unknown>) => {
+                const id = data?.experimentId;
+                if (typeof id === 'string' && id.length > 0) {
+                    callbacks.onInAppDismissed(id);
+                }
             },
         );
     }
 
     unregisterCallbacks(): void {
-        // webengage-react-native has no explicit deregister; replace with no-ops.
-        WebEngage.setUpInAppCallbacks(null, null, null, null);
-        this._activeInAppId = null;
+        this._prepareSubscription?.remove();
+        this._dismissSubscription?.remove();
+        this._prepareSubscription = null;
+        this._dismissSubscription = null;
+        this._emitter = null;
     }
 
     navigateScreen(name: string): void {
-        WebEngage.screenNavigated(name);
+        this._weInstance.screen(name);
     }
 
     trackSystemEvent(
@@ -119,10 +156,59 @@ export class WebEngageSdkBridge implements WebEngageBridge {
         eventData: Record<string, unknown>,
     ): void {
         const attributes = { ...systemData, ...eventData };
-        WebEngage.trackEvent(eventName, attributes);
+        this._weInstance.track(eventName, attributes);
     }
 
     isAvailable(): boolean {
-        return true;
+        return !!NativeModules.DigiaSuppressModule;
     }
+
+    // ── Fallback: JS-only filter (no native suppression) ─────────────────────
+    // Used when the native module is not linked (e.g. bare JS tests, Expo Go).
+    // Mirrors the previous behaviour: detect Digia contracts in onPrepare and
+    // forward only those to the Digia delegate.
+
+    private _fallbackCounter = 0;
+    private _fallbackActiveId: string | null = null;
+
+    private _registerFallbackCallbacks(callbacks: {
+        onInAppPrepared: (data: WEInAppData) => void;
+        onInAppDismissed: (campaignId: string) => void;
+    }): void {
+        this._dismissSubscription = this._weInstance.notification.onDismiss(
+            (_data: unknown) => {
+                const id = this._fallbackActiveId;
+                this._fallbackActiveId = null;
+                if (id != null) callbacks.onInAppDismissed(id);
+            },
+        );
+
+        this._prepareSubscription = this._weInstance.notification.onPrepare(
+            (data: unknown) => {
+                if (data == null) return;
+                const raw = data as Record<string, unknown>;
+                if (!isDigiaCampaign(raw)) return;
+
+                this._fallbackCounter++;
+                const id = `we_inapp_${this._fallbackCounter}`;
+                this._fallbackActiveId = id;
+                callbacks.onInAppPrepared({ ...raw, experimentId: id });
+            },
+        );
+    }
+}
+
+// ─── JS-side Digia detection (used only in the fallback path) ────────────────
+// Kept private to this module; mirrors the logic in DigiaSuppressModule.kt / .m.
+
+// ─── JS-side Digia detection (fallback path only) ───────────────────────────
+// Uses the same parseContractFromMap + extractContractFromHtml from
+// WebEngagePayloadMapper — identical to Flutter reusing
+// WebEngagePayloadMapper._normalizeWithDigiaContract for detection.
+// Includes full HTML attribute normalization (view-id→viewId etc.) and
+// HTML unescaping, matching the Flutter and Android implementations exactly.
+
+function isDigiaCampaign(data: Record<string, unknown>): boolean {
+    return parseContractFromMap(data, 'top_level') != null ||
+        extractContractFromHtml(data) != null;
 }

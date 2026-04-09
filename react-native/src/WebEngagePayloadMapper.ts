@@ -1,6 +1,4 @@
 import type { InAppPayload } from './types';
-import { SuppressionMode, defaultConfig } from './config';
-import type { WebEngagePluginConfig } from './config';
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -15,15 +13,8 @@ import type { WebEngagePluginConfig } from './config';
  * 2. If `type == "inline"`, build an inline payload (requires `placementKey`
  *    and `viewId`).
  * 3. If `command` is present, build a nudge payload.
- * 4. Otherwise fall back to a forced-dialog payload when
- *    `suppressionMode == SUPPRESS_ALL` and `forcedDialogComponentId` is set.
  */
 export class WebEngagePayloadMapper {
-    private readonly _config: WebEngagePluginConfig;
-
-    constructor(config: Partial<WebEngagePluginConfig> = {}) {
-        this._config = { ...defaultConfig, ...config };
-    }
 
     /**
      * Maps a WebEngage in-app notification data map (with injected
@@ -79,14 +70,6 @@ export class WebEngagePayloadMapper {
                 },
                 cepContext: { experimentId: campaignId },
             });
-        } else {
-            const forcedId = this._config.forcedDialogComponentId?.trim() ?? '';
-            if (
-                this._config.suppressionMode === SuppressionMode.SUPPRESS_ALL &&
-                forcedId
-            ) {
-                payloads.push(buildForcedDialogPayload(campaignId, forcedId));
-            }
         }
 
         return payloads;
@@ -108,8 +91,11 @@ export class WebEngagePayloadMapper {
 }
 
 // ─── Contract extraction helpers (module-private) ────────────────────────────
+// Exported so WebEngageBridge can reuse the same detection logic in the
+// fallback path — mirrors Flutter's webengage_bridge.dart reusing
+// WebEngagePayloadMapper._normalizeWithDigiaContract.
 
-function extractContractFromHtml(
+export function extractContractFromHtml(
     raw: Record<string, unknown>,
 ): Record<string, unknown> | null {
     const candidates = collectTextCandidates(raw);
@@ -141,7 +127,7 @@ function extractContractFromHtml(
     return null;
 }
 
-function parseContractFromMap(
+export function parseContractFromMap(
     raw: Record<string, unknown>,
     source: string,
 ): Record<string, unknown> | null {
@@ -180,29 +166,20 @@ function parseHtmlAttributes(
     // Matches: key="value" | key='value' | key=value | standalone key
     const attrRe = /(\w[\w-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+)))?/g;
     for (const match of attrsString.matchAll(attrRe)) {
-        const key = match[1];
+        const rawKey = match[1];
         const value = match[2] ?? match[3] ?? match[4] ?? '';
-        if (key) result[key] = htmlUnescape(value);
+        if (rawKey) result[normalizeAttrKey(rawKey)] = htmlUnescape(value);
     }
     return result;
 }
 
-// ─── Payload builders ─────────────────────────────────────────────────────────
-
-function buildForcedDialogPayload(
-    campaignId: string,
-    componentId: string,
-): InAppPayload {
-    return {
-        id: `${campaignId}:forced_dialog`,
-        content: {
-            command: 'SHOW_DIALOG',
-            viewId: componentId,
-            screenId: '*',
-            args: {},
-        },
-        cepContext: { experimentId: campaignId },
-    };
+function normalizeAttrKey(key: string): string {
+    switch (key) {
+        case 'view-id': case 'view_id': return 'viewId';
+        case 'placement-key': case 'placement_key': case 'placement': return 'placementKey';
+        case 'screen-id': case 'screen_id': return 'screenId';
+        default: return key;
+    }
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────

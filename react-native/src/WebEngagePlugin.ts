@@ -46,7 +46,7 @@ export class WebEngagePlugin implements DigiaCEPPlugin {
         config?: Partial<WebEngagePluginConfig>;
     } = {}) {
         this._bridge = options.bridge ?? new WebEngageSdkBridge();
-        this._mapper = new WebEngagePayloadMapper(options.config);
+        this._mapper = new WebEngagePayloadMapper();
         this._events = new WebEngageEventBridge(this._bridge);
     }
 
@@ -81,9 +81,11 @@ export class WebEngagePlugin implements DigiaCEPPlugin {
     // ─── Private handlers ───────────────────────────────────────────────────────
 
     private _handleInAppPrepared(data: Record<string, unknown>): void {
+        console.log('[DigiaBridge] _handleInAppPrepared called, delegate:', !!this._delegate, 'data:', JSON.stringify(data));
         const activeDelegate = this._delegate;
         if (!activeDelegate) return;
         const payloads = this._mapper.map(data);
+        console.log('[DigiaBridge] mapped payloads:', JSON.stringify(payloads));
         for (const payload of payloads) {
             activeDelegate.onCampaignTriggered(payload);
         }

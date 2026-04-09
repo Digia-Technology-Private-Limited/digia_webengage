@@ -1,34 +1,27 @@
 /**
- * Ambient type declarations for `webengage-react-native`.
+ * Ambient type declarations for `react-native-webengage`.
  *
  * The package is a peer dependency and may not be installed in a dev
  * environment. These declarations provide just enough typing for the
  * WebEngageSdkBridge implementation to compile.
  */
-declare module 'webengage-react-native' {
-    interface WebEngageModule {
-        /**
-         * Registers in-app notification lifecycle callbacks.
-         *
-         * Parameter order (v2.x): shown, dismissed, clicked, prepared.
-         */
-        setUpInAppCallbacks(
-            onInAppShown: ((data: unknown) => void) | null,
-            onInAppDismissed: ((data: unknown) => void) | null,
-            onInAppClicked: ((data: unknown, actionId: string) => void) | null,
-            onInAppPrepared: ((data: unknown) => void) | null,
-        ): void;
+// declare module 'react-native-webengage' {
+//     interface EmitterSubscription {
+//         remove(): void;
+//     }
 
-        /** Tracks a custom event. */
-        trackEvent(
-            eventName: string,
-            attributes?: Record<string, unknown>,
-        ): void;
+//     interface WebEngageNotificationChannel {
+//         onPrepare(callback: (data: unknown) => void): EmitterSubscription;
+//         onShown(callback: (data: unknown) => void): EmitterSubscription;
+//         onClick(callback: (data: unknown, actionId: string) => void): EmitterSubscription;
+//         onDismiss(callback: (data: unknown) => void): EmitterSubscription;
+//     }
 
-        /** Records a screen navigation event. */
-        screenNavigated(screenName: string): void;
-    }
+//     class WebEngagePlugin {
+//         notification: WebEngageNotificationChannel;
+//         track(eventName: string, attributes?: Record<string, unknown>): void;
+//         screen(name: string, data?: Record<string, unknown>): void;
+//     }
 
-    const WebEngage: WebEngageModule;
-    export default WebEngage;
-}
+//     export default WebEngagePlugin;
+// }
