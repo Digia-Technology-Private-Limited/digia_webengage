@@ -201,7 +201,7 @@ internal open class WebEngagePayloadMapper(
                                         "type" to "inline",
                                         "screenId" to context.screenId,
                                         "placementKey" to placementKey,
-                                        "componentId" to componentId,
+                                        "viewId" to componentId,
                                         "args" to context.args,
                                 ),
                         cepContext =

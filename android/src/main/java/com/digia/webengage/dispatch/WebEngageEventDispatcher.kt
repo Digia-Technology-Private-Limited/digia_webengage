@@ -159,57 +159,67 @@ internal class WebEngageEventDispatcher(
         // ── Inline (SHOW_INLINE) ─────────────────────────────────────────────────────
 
         private fun dispatchInlineEvent(event: DigiaExperienceEvent, payload: InAppPayload) {
-                val eventName =
-                        when (event) {
-                                DigiaExperienceEvent.Impressed -> "app_personalization_view"
-                                is DigiaExperienceEvent.Clicked -> "app_personalization_click"
-                                DigiaExperienceEvent.Dismissed ->
-                                        return // WE has no inline dismiss system event
-                        }
+                if (event is DigiaExperienceEvent.Dismissed) return
 
                 val experimentId =
-                        payload.cepContext.string("campaignId")
-                                ?: payload.cepContext.string("experimentId")
+                        payload.cepContext.string("experimentId")
+                                ?: payload.cepContext.string("campaignId")
                                         ?: payload.id.substringBefore(':', payload.id)
-                val propertyId =
-                        payload.cepContext.string("propertyId")
-                                ?: (payload.content["placementKey"] as? String)
-                                        ?: payload.id.substringAfter(':', payload.id)
-                val variationId = payload.cepContext.string("variationId") ?: payload.id
+
+                val cachedData = cache.get(experimentId)
+                val weExperimentId =
+                        cachedData?.experimentId?.takeIf { it.isNotBlank() } ?: experimentId
+                val weVariationId =
+                        cachedData?.variationId?.takeIf { it.isNotBlank() }
+                                ?: payload.cepContext.string("variationId") ?: payload.id
 
                 val systemData =
                         mutableMapOf<String, Any?>(
-                                "experiment_id" to experimentId,
-                                "p_id" to propertyId,
-                                "id" to variationId,
+                                "experiment_id" to weExperimentId,
+                                "id" to weVariationId,
                         )
-                if (event is DigiaExperienceEvent.Clicked) {
-                        event.elementId
-                                ?.trim()
-                                ?.takeIf { it.isNotBlank() }
-                                // WebEngageConstant.CTA_ID = "call_to_action"
-                                ?.let { systemData["call_to_action"] = it }
-                }
 
-                val eventData =
-                        (payload.content["args"] as? Map<*, *>)
-                                ?.entries
-                                ?.mapNotNull { (key, value) ->
-                                        (key as? String)?.let { it to value }
+                when (event) {
+                        DigiaExperienceEvent.Impressed -> {
+                                bridge.trackSystemEvent(
+                                        eventName = "notification_view",
+                                        systemData = systemData,
+                                        eventData = emptyMap(),
+                                )
+                                bridge.releaseCampaignGate(experimentId)
+                                runCatching { DataHolder.get().c(false) }
+                                bridge.trackSystemEvent(
+                                        eventName = "notification_close",
+                                        systemData = systemData,
+                                        eventData = emptyMap(),
+                                )
+                                cache.remove(experimentId)
+                                runCatching {
+                                        Log.v(
+                                                TAG,
+                                                "dispatched: notification_view + notification_close (inline) — experimentId=$experimentId"
+                                        )
                                 }
-                                ?.toMap()
-                                ?: emptyMap()
-
-                bridge.trackSystemEvent(
-                        eventName = eventName,
-                        systemData = systemData,
-                        eventData = eventData,
-                )
-                runCatching {
-                        Log.v(
-                                TAG,
-                                "dispatched: $eventName — experimentId=$experimentId propertyId=$propertyId"
-                        )
+                        }
+                        is DigiaExperienceEvent.Clicked -> {
+                                event.elementId?.trim()?.takeIf { it.isNotBlank() }?.let {
+                                        systemData["call_to_action"] = it
+                                }
+                                bridge.trackSystemEvent(
+                                        eventName = "notification_click",
+                                        systemData = systemData,
+                                        eventData = emptyMap(),
+                                )
+                                runCatching {
+                                        Log.v(
+                                                TAG,
+                                                "dispatched: notification_click (inline) — experimentId=$experimentId"
+                                        )
+                                }
+                        }
+                        DigiaExperienceEvent.Dismissed -> {
+                                /* handled above */
+                        }
                 }
         }
 
