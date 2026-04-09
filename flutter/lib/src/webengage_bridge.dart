@@ -26,7 +26,7 @@ abstract class WebEngageBridge {
   void navigateScreen(String name);
 
   /// Tracks a system event with the given name, system data and event data.
-  void trackSystemEvent({
+  Future<void> trackSystemEvent({
     required String eventName,
     required Map<String, dynamic> systemData,
     required Map<String, dynamic> eventData,
@@ -95,8 +95,8 @@ class WebEngageSdkBridge implements WebEngageBridge {
 
   // How long to keep the gate closed after dismiss to absorb the WE echo
   // re-evaluation. notification_close → eventRuleCode → onInAppPrepared arrives
-  // within milliseconds; 3 s is a generous safety window.
-  static const _gateReleaseDelay = Duration(seconds: 2);
+  // within milliseconds; 1 s is a generous safety window.
+  static const _gateReleaseDelay = Duration(seconds: 1);
 
   void Function(String)? _onInAppDismissed;
 
@@ -151,16 +151,16 @@ class WebEngageSdkBridge implements WebEngageBridge {
   }
 
   @override
-  void trackSystemEvent({
+  Future<void> trackSystemEvent({
     required String eventName,
     required Map<String, dynamic> systemData,
     required Map<String, dynamic> eventData,
-  }) {
+  }) async {
     final attributes = <String, dynamic>{
       ...systemData,
       ...eventData,
     };
-    unawaited(WebEngagePlugin.trackEvent(eventName, attributes));
+    await WebEngagePlugin.trackEvent(eventName, attributes);
   }
 
   @override

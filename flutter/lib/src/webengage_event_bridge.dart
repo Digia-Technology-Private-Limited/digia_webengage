@@ -19,16 +19,17 @@ class WebEngageEventBridge {
   /// Routing is driven by `payload.content['type']`:
   /// - `'inline'` → `app_personalization_*` system events (WE Personalization).
   /// - Otherwise → `notification_*` system events (WE in-app).
-  void notifyEvent(DigiaExperienceEvent event, InAppPayload payload) {
+  Future<void> notifyEvent(DigiaExperienceEvent event, InAppPayload payload) {
     final type = payload.content['type'] as String?;
     if (type == 'inline') {
-      _dispatchInlineEvent(event, payload);
+      return _dispatchInlineEvent(event, payload);
     } else {
-      _dispatchInAppEvent(event, payload);
+      return _dispatchInAppEvent(event, payload);
     }
   }
 
-  void _dispatchInAppEvent(DigiaExperienceEvent event, InAppPayload payload) {
+  Future<void> _dispatchInAppEvent(
+      DigiaExperienceEvent event, InAppPayload payload) async {
     final String eventName;
     if (event is ExperienceImpressed) {
       eventName = 'notification_view';
@@ -56,58 +57,55 @@ class WebEngageEventBridge {
       if (cta != null && cta.isNotEmpty) systemData['call_to_action'] = cta;
     }
 
-    _bridge.trackSystemEvent(
+    await _bridge.trackSystemEvent(
       eventName: eventName,
       systemData: systemData,
       eventData: const <String, dynamic>{},
     );
+
+    if (event is ExperienceImpressed) {
+      // Release the Dart-side plugin gate so the next queued campaign can show.
+      _bridge.notifyDismissed(experimentId);
+    }
   }
 
-  void _dispatchInlineEvent(DigiaExperienceEvent event, InAppPayload payload) {
-    final String eventName;
-    if (event is ExperienceImpressed) {
-      eventName = 'app_personalization_view';
-    } else if (event is ExperienceClicked) {
-      eventName = 'app_personalization_click';
-    } else {
-      // No inline dismiss system event in WebEngage
-      return;
-    }
+  Future<void> _dispatchInlineEvent(
+      DigiaExperienceEvent event, InAppPayload payload) async {
+    if (event is ExperienceDismissed) return;
 
     final experimentId = _str(
-          payload.cepContext['campaignId'] ??
-              payload.cepContext['experimentId'],
+          payload.cepContext['experimentId'] ??
+              payload.cepContext['campaignId'],
         ) ??
         payload.id.split(':').first;
-    final parts = payload.id.split(':');
-    final propertyId = _str(payload.cepContext['propertyId']) ??
-        (payload.content['placementKey'] as String?) ??
-        (parts.length > 1 ? parts.last : payload.id);
     final variationId = _str(payload.cepContext['variationId']) ?? payload.id;
-
     final systemData = <String, dynamic>{
       'experiment_id': experimentId,
-      'p_id': propertyId,
       'id': variationId,
     };
-    if (event is ExperienceClicked) {
+
+    if (event is ExperienceImpressed) {
+      await _bridge.trackSystemEvent(
+        eventName: 'notification_view',
+        systemData: systemData,
+        eventData: const <String, dynamic>{},
+      );
+      await _bridge.trackSystemEvent(
+        eventName: 'notification_close',
+        systemData: systemData,
+        eventData: const <String, dynamic>{},
+      );
+      // Release the Dart-side plugin gate so the next queued campaign can show.
+      _bridge.notifyDismissed(experimentId);
+    } else if (event is ExperienceClicked) {
       final cta = event.elementId?.trim();
       if (cta != null && cta.isNotEmpty) systemData['call_to_action'] = cta;
+      await _bridge.trackSystemEvent(
+        eventName: 'notification_click',
+        systemData: systemData,
+        eventData: const <String, dynamic>{},
+      );
     }
-
-    final args = payload.content['args'];
-    final eventData = args is Map
-        ? <String, dynamic>{
-            for (final e in args.entries)
-              if (e.key is String) e.key as String: e.value,
-          }
-        : const <String, dynamic>{};
-
-    _bridge.trackSystemEvent(
-      eventName: eventName,
-      systemData: systemData,
-      eventData: eventData,
-    );
   }
 
   String? _str(Object? value) {

@@ -42,7 +42,7 @@ class WebEngagePayloadMapper {
               'type': 'inline',
               'screenId': screenId,
               'placementKey': placementKey,
-              'componentId': viewId,
+              'viewId': viewId,
               'args': args,
             },
             cepContext: <String, dynamic>{
@@ -97,7 +97,7 @@ class WebEngagePayloadMapper {
         'type': 'inline',
         'screenId': screenId,
         'placementKey': targetViewId,
-        'componentId': componentId,
+        'viewId': componentId,
         'args': args,
       },
       cepContext: <String, dynamic>{
