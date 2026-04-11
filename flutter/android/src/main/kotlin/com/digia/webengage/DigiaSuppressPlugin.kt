@@ -46,6 +46,7 @@ class DigiaSuppressPlugin : FlutterPlugin {
 
     companion object {
         const val CHANNEL = "plugins.digia.tech/webengage_suppress"
+        private const val TAG = "DigiaSuppressPlugin"
 
         private val VALID_COMMANDS = setOf("SHOW_DIALOG", "SHOW_BOTTOM_SHEET")
     }
@@ -53,8 +54,32 @@ class DigiaSuppressPlugin : FlutterPlugin {
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(binding.binaryMessenger, CHANNEL)
         channel!!.setMethodCallHandler { call, result ->
-            // `configure` is kept for API compatibility but suppression is now per-campaign.
-            result.success(null)
+            when (call.method) {
+                "trackSystemEvent" -> {
+                    val args = call.arguments as? Map<*, *>
+                    val eventName = args?.get("eventName") as? String
+                    @Suppress("UNCHECKED_CAST")
+                    val systemData = (args?.get("systemData") as? Map<String, Any?>) ?: emptyMap()
+                    @Suppress("UNCHECKED_CAST")
+                    val eventData = (args?.get("eventData") as? Map<String, Any?>) ?: emptyMap()
+                    if (!eventName.isNullOrBlank()) {
+                        runCatching {
+                            WebEngage.get()
+                                    .analytics()
+                                    .trackSystem(eventName, systemData, eventData)
+                            android.util.Log.v(
+                                    TAG,
+                                    "trackSystemEvent: $eventName systemData=$systemData"
+                            )
+                        }
+                    } else {
+                        android.util.Log.w(TAG, "trackSystemEvent: skipped — eventName is blank")
+                    }
+                    result.success(null)
+                }
+                // `configure` is kept for API compatibility but suppression is now per-campaign.
+                else -> result.success(null)
+            }
         }
         registerInAppCallback()
     }

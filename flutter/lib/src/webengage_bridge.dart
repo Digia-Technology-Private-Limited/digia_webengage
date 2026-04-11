@@ -156,11 +156,11 @@ class WebEngageSdkBridge implements WebEngageBridge {
     required Map<String, dynamic> systemData,
     required Map<String, dynamic> eventData,
   }) async {
-    final attributes = <String, dynamic>{
-      ...systemData,
-      ...eventData,
-    };
-    await WebEngagePlugin.trackEvent(eventName, attributes);
+    await _suppressChannel.invokeMethod<void>('trackSystemEvent', {
+      'eventName': eventName,
+      'systemData': systemData,
+      'eventData': eventData,
+    });
   }
 
   @override
