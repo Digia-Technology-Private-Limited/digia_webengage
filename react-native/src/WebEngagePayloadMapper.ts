@@ -49,7 +49,7 @@ export class WebEngagePayloadMapper {
                         type: 'inline',
                         screenId,
                         placementKey,
-                        componentId: viewId,
+                        viewId: viewId,
                         args,
                     },
                     cepContext: {

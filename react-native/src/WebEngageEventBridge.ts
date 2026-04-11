@@ -49,6 +49,7 @@ export class WebEngageEventBridge {
             return;
         }
 
+
         const experimentId =
             str(
                 payload.cepContext['experimentId'] ??
@@ -69,52 +70,35 @@ export class WebEngageEventBridge {
         this._bridge.trackSystemEvent(eventName, systemData, {});
     }
 
-    // ─── Inline (app_personalization_*) ──────────────────────────────────────
+    // ─── Inline ──────────────────────────────────────────────────────────────
 
     private _dispatchInlineEvent(
         event: DigiaExperienceEvent,
         payload: InAppPayload,
     ): void {
-        // WebEngage has no dismiss system event for inline campaigns
         if (event.type === 'dismissed') return;
-
-        const eventName =
-            event.type === 'impressed'
-                ? 'app_personalization_view'
-                : 'app_personalization_click';
 
         const experimentId =
             str(
-                payload.cepContext['campaignId'] ??
-                payload.cepContext['experimentId'],
+                payload.cepContext['experimentId'] ??
+                payload.cepContext['campaignId'],
             ) ?? payload.id.split(':')[0];
-
-        const parts = payload.id.split(':');
-        const propertyId =
-            str(payload.cepContext['propertyId']) ??
-            str(payload.content['placementKey']) ??
-            (parts.length > 1 ? parts[parts.length - 1] : payload.id);
-
         const variationId =
             str(payload.cepContext['variationId']) ?? payload.id;
 
         const systemData: Record<string, unknown> = {
             experiment_id: experimentId,
-            p_id: propertyId,
             id: variationId,
         };
-        if (event.type === 'clicked') {
+
+        if (event.type === 'impressed') {
+            this._bridge.trackSystemEvent('notification_view', systemData, {});
+            this._bridge.trackSystemEvent('notification_close', systemData, {});
+        } else if (event.type === 'clicked') {
             const cta = event.elementId?.trim();
             if (cta) systemData['call_to_action'] = cta;
+            this._bridge.trackSystemEvent('notification_click', systemData, {});
         }
-
-        const args = payload.content['args'];
-        const eventData: Record<string, unknown> =
-            args != null && typeof args === 'object' && !Array.isArray(args)
-                ? { ...(args as Record<string, unknown>) }
-                : {};
-
-        this._bridge.trackSystemEvent(eventName, systemData, eventData);
     }
 }
 

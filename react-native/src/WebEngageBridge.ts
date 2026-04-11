@@ -1,6 +1,4 @@
-import WebEngagePlugin from 'react-native-webengage';
-import { NativeModules, DeviceEventEmitter } from 'react-native';
-import { parseContractFromMap, extractContractFromHtml } from './WebEngagePayloadMapper';
+// import { parseContractFromMap, extractContractFromHtml } from './WebEngagePayloadMapper';
 
 // ─── Abstract interface ───────────────────────────────────────────────────────
 
@@ -62,8 +60,7 @@ export interface WebEngageBridge {
 
 // ─── Event names emitted by the native DigiaSuppressModule ───────────────────
 
-const EVENT_PREPARED = 'weDigiaInAppPrepared';
-const EVENT_DISMISSED = 'weDigiaInAppDismissed';
+
 
 // ─── Production implementation ────────────────────────────────────────────────
 
@@ -82,61 +79,53 @@ const EVENT_DISMISSED = 'weDigiaInAppDismissed';
  * The `react-native-webengage` instance is kept only for screen navigation and
  * event tracking — its `onPrepare` / `onDismiss` callbacks are no longer used.
  */
+import { NativeModules, DeviceEventEmitter } from 'react-native';
+import WebEngagePlugin from 'react-native-webengage';
+
+const { DigiaSuppressModule } = NativeModules;
+
+export const EVENT_PREPARED = 'weDigiaInAppPrepared';
+export const EVENT_DISMISSED = 'weDigiaInAppDismissed';
+
 export class WebEngageSdkBridge implements WebEngageBridge {
     private _weInstance: InstanceType<typeof WebEngagePlugin>;
     private _prepareSubscription: { remove(): void } | null = null;
     private _dismissSubscription: { remove(): void } | null = null;
 
-    /**
-     * @param weInstance - Optional existing WebEngagePlugin instance to reuse.
-     *   Pass the same instance used for user/analytics calls to avoid
-     *   registering duplicate native event listeners.
-     */
     constructor(weInstance?: InstanceType<typeof WebEngagePlugin>) {
         this._weInstance = weInstance ?? new WebEngagePlugin();
     }
 
     registerCallbacks(callbacks: {
-        onInAppPrepared: (data: WEInAppData) => void;
+        onInAppPrepared: (data: any) => void;
         onInAppDismissed: (campaignId: string) => void;
     }): void {
-        const nativeModule = NativeModules.DigiaSuppressModule;
-        console.log('[DigiaBridge] DigiaSuppressModule available:', !!nativeModule);
-        if (!nativeModule) {
-            // Native module not linked — fall back to react-native-webengage events
-            // so the JS-only filter path still works (no native suppression, but
-            // Digia campaigns are still forwarded).
-            console.log('[DigiaBridge] Falling back to react-native-webengage callbacks');
-            this._registerFallbackCallbacks(callbacks);
+        if (!DigiaSuppressModule) {
+            console.warn('[DigiaBridge] DigiaSuppressModule not available');
             return;
         }
 
-        // Activate the native module's listener count tracking.
-        nativeModule.install?.();
+        console.log('[DigiaBridge] Registering listeners via DeviceEventEmitter');
 
-        // Use DeviceEventEmitter directly — on Android, NativeEventEmitter is a
-        // thin wrapper over DeviceEventEmitter. Using it directly avoids any
-        // wrapper-layer delivery issues.
-        console.log('[DigiaBridge] Subscribing to', EVENT_PREPARED, 'via DeviceEventEmitter');
-
+        // Use DeviceEventEmitter directly — bypasses NativeEventEmitter which
+        // may not properly call native addListener in bridgeless mode.
         this._prepareSubscription = DeviceEventEmitter.addListener(
             EVENT_PREPARED,
-            (data: Record<string, unknown>) => {
-                console.log('[DigiaBridge] Received', EVENT_PREPARED, JSON.stringify(data));
-                if (data == null) return;
-                callbacks.onInAppPrepared(data);
-            },
+            (data) => {
+                console.log('[DigiaBridge] Received', EVENT_PREPARED, data);
+                if (data) callbacks.onInAppPrepared(data);
+            }
         );
 
         this._dismissSubscription = DeviceEventEmitter.addListener(
             EVENT_DISMISSED,
-            (data: Record<string, unknown>) => {
-                console.log('[DigiaBridge] Received', EVENT_DISMISSED, JSON.stringify(data));
+            (data) => {
+                console.log('[DigiaBridge] Received', EVENT_DISMISSED, data);
                 const id = data?.experimentId;
-                if (typeof id === 'string' && id.length > 0) {
+                if (typeof id === 'string') {
                     callbacks.onInAppDismissed(id);
                 }
-            },
+            }
         );
     }
 
@@ -156,60 +145,15 @@ export class WebEngageSdkBridge implements WebEngageBridge {
         systemData: Record<string, unknown>,
         eventData: Record<string, unknown>,
     ): void {
-        const attributes = { ...systemData, ...eventData };
-        this._weInstance.track(eventName, attributes);
+        if (DigiaSuppressModule?.trackSystemEvent) {
+            DigiaSuppressModule.trackSystemEvent(eventName, systemData, eventData);
+        } else {
+            // Fallback: merge and dispatch via the JS WebEngage SDK.
+            this._weInstance.track(eventName, { ...systemData, ...eventData });
+        }
     }
 
     isAvailable(): boolean {
-        return !!NativeModules.DigiaSuppressModule;
+        return !!DigiaSuppressModule;
     }
-
-    // ── Fallback: JS-only filter (no native suppression) ─────────────────────
-    // Used when the native module is not linked (e.g. bare JS tests, Expo Go).
-    // Mirrors the previous behaviour: detect Digia contracts in onPrepare and
-    // forward only those to the Digia delegate.
-
-    private _fallbackCounter = 0;
-    private _fallbackActiveId: string | null = null;
-
-    private _registerFallbackCallbacks(callbacks: {
-        onInAppPrepared: (data: WEInAppData) => void;
-        onInAppDismissed: (campaignId: string) => void;
-    }): void {
-        this._dismissSubscription = this._weInstance.notification.onDismiss(
-            (_data: unknown) => {
-                const id = this._fallbackActiveId;
-                this._fallbackActiveId = null;
-                if (id != null) callbacks.onInAppDismissed(id);
-            },
-        );
-
-        this._prepareSubscription = this._weInstance.notification.onPrepare(
-            (data: unknown) => {
-                if (data == null) return;
-                const raw = data as Record<string, unknown>;
-                if (!isDigiaCampaign(raw)) return;
-
-                this._fallbackCounter++;
-                const id = `we_inapp_${this._fallbackCounter}`;
-                this._fallbackActiveId = id;
-                callbacks.onInAppPrepared({ ...raw, experimentId: id });
-            },
-        );
-    }
-}
-
-// ─── JS-side Digia detection (used only in the fallback path) ────────────────
-// Kept private to this module; mirrors the logic in DigiaSuppressModule.kt / .m.
-
-// ─── JS-side Digia detection (fallback path only) ───────────────────────────
-// Uses the same parseContractFromMap + extractContractFromHtml from
-// WebEngagePayloadMapper — identical to Flutter reusing
-// WebEngagePayloadMapper._normalizeWithDigiaContract for detection.
-// Includes full HTML attribute normalization (view-id→viewId etc.) and
-// HTML unescaping, matching the Flutter and Android implementations exactly.
-
-function isDigiaCampaign(data: Record<string, unknown>): boolean {
-    return parseContractFromMap(data, 'top_level') != null ||
-        extractContractFromHtml(data) != null;
 }
