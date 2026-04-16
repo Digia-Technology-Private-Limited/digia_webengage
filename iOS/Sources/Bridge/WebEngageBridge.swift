@@ -45,6 +45,9 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     // singleton is created with default settings.
     internal var config: WebEngagePluginConfig
     private let dataCache: InAppDataCache
+    // Gate: mirrors Flutter's _activeExperimentIds — blocks duplicate onInAppPrepared
+    // calls for the same campaign (race conditions between WE re-evaluation cycles).
+    private var activeExperimentIds: Set<String> = []
 
     private var onPayloadCallback:      (([String: Any]) -> Void)?
     private var onInvalidateCallback:   ((String) -> Void)?
@@ -132,6 +135,7 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         WebEngage.sharedInstance().setValue(nil, forKey: "notificationDelegate")
         onPayloadCallback    = nil
         onInvalidateCallback = nil
+        activeExperimentIds.removeAll()
     }
 
     func unregisterInlineListener() {
@@ -198,7 +202,16 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
             dataCache.put(experimentId: experimentId, data: cacheEntry)
         }
 
-        // ── Step 5: Forward to plugin ───────────────────────────────────────────
+        // ── Step 5: Gate check — block duplicate fires for the same campaign ───
+        if !experimentId.isEmpty {
+            if activeExperimentIds.contains(experimentId) {
+                logDebug("inapp_prepared duplicate blocked exp=\(experimentId)")
+                return inAppNotificationData
+            }
+            activeExperimentIds.insert(experimentId)
+        }
+
+        // ── Step 6: Forward to plugin ───────────────────────────────────────────
         onPayloadCallback?(payload)
         return inAppNotificationData
     }
@@ -213,7 +226,11 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
                      ?? inAppNotificationData?["experimentId"]
                      ?? inAppNotificationData?["experiment_id"]) ?? ""
         logDebug("inapp_dismissed exp=\(id)")
-        if !id.isEmpty { onInvalidateCallback?(id) }
+        if !id.isEmpty {
+            // Release the gate so the campaign can show again if re-triggered.
+            activeExperimentIds.remove(id)
+            onInvalidateCallback?(id)
+        }
     }
 
     @objc func notification(_ inAppNotificationData: [String: Any]!, clickedWithAction actionId: String!) {

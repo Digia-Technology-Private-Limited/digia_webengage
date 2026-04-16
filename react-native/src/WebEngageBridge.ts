@@ -91,6 +91,9 @@ export class WebEngageSdkBridge implements WebEngageBridge {
     private _weInstance: InstanceType<typeof WebEngagePlugin>;
     private _prepareSubscription: { remove(): void } | null = null;
     private _dismissSubscription: { remove(): void } | null = null;
+    // Gate: mirrors Flutter's _activeExperimentIds — blocks duplicate onInAppPrepared
+    // calls for the same campaign (race conditions between WE re-evaluation cycles).
+    private _activeExperimentIds = new Set<string>();
 
     constructor(weInstance?: InstanceType<typeof WebEngagePlugin>) {
         this._weInstance = weInstance ?? new WebEngagePlugin();
@@ -113,7 +116,17 @@ export class WebEngageSdkBridge implements WebEngageBridge {
             EVENT_PREPARED,
             (data) => {
                 console.log('[DigiaBridge] Received', EVENT_PREPARED, data);
-                if (data) callbacks.onInAppPrepared(data);
+                if (!data) return;
+                const experimentId = data.experimentId as string | undefined;
+                // Gate check: block duplicate fires for the same campaign.
+                if (experimentId) {
+                    if (this._activeExperimentIds.has(experimentId)) {
+                        console.log('[DigiaBridge] Duplicate blocked for', experimentId);
+                        return;
+                    }
+                    this._activeExperimentIds.add(experimentId);
+                }
+                callbacks.onInAppPrepared(data);
             }
         );
 
@@ -123,6 +136,8 @@ export class WebEngageSdkBridge implements WebEngageBridge {
                 console.log('[DigiaBridge] Received', EVENT_DISMISSED, data);
                 const id = data?.experimentId;
                 if (typeof id === 'string') {
+                    // Release the gate so the campaign can show again if re-triggered.
+                    this._activeExperimentIds.delete(id);
                     callbacks.onInAppDismissed(id);
                 }
             }
@@ -134,6 +149,7 @@ export class WebEngageSdkBridge implements WebEngageBridge {
         this._dismissSubscription?.remove();
         this._prepareSubscription = null;
         this._dismissSubscription = null;
+        this._activeExperimentIds.clear();
     }
 
     navigateScreen(name: string): void {
