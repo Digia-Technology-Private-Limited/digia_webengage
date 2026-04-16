@@ -1,5 +1,4 @@
 import { WebEngagePayloadMapper } from '../src/WebEngagePayloadMapper';
-import { SuppressionMode } from '../src/config';
 
 // ─── Default mapper (SUPPRESS_DIGIA_ONLY, no forced dialog) ──────────────────
 const mapper = new WebEngagePayloadMapper();
@@ -156,47 +155,6 @@ describe('WebEngagePayloadMapper — inline payloads', () => {
     it('type matching is case-insensitive', () => {
         const [payload] = mapper.map(inlineData({ type: 'INLINE' }));
         expect(payload.content['type']).toBe('inline');
-    });
-});
-
-// ─── SUPPRESS_ALL forced-dialog fallback ─────────────────────────────────────
-
-describe('WebEngagePayloadMapper — SUPPRESS_ALL forced dialog', () => {
-    const forcedMapper = new WebEngagePayloadMapper({
-        suppressionMode: SuppressionMode.SUPPRESS_ALL,
-        diagnosticsEnabled: false,
-        forcedDialogComponentId: 'coupon_nudge-b6dByb',
-    });
-
-    it('uses forced dialog for non-digia payload', () => {
-        const [payload] = forcedMapper.map({
-            experimentId: 'exp-1',
-            title: 'Any campaign payload',
-        });
-
-        expect(payload.id).toBe('exp-1:forced_dialog');
-        expect(payload.content['command']).toBe('SHOW_DIALOG');
-        expect(payload.content['viewId']).toBe('coupon_nudge-b6dByb');
-        expect(payload.content['screenId']).toBe('*');
-    });
-
-    it('does NOT use forced dialog when forcedDialogComponentId is absent', () => {
-        const mapper2 = new WebEngagePayloadMapper({
-            suppressionMode: SuppressionMode.SUPPRESS_ALL,
-            diagnosticsEnabled: false,
-        });
-        const result = mapper2.map({ experimentId: 'exp-1', title: 'plain' });
-        expect(result).toEqual([]);
-    });
-
-    it('does NOT use forced dialog in PASS_THROUGH mode', () => {
-        const mapper2 = new WebEngagePayloadMapper({
-            suppressionMode: SuppressionMode.PASS_THROUGH,
-            diagnosticsEnabled: false,
-            forcedDialogComponentId: 'coupon_nudge-b6dByb',
-        });
-        const result = mapper2.map({ experimentId: 'exp-1', title: 'plain' });
-        expect(result).toEqual([]);
     });
 });
 

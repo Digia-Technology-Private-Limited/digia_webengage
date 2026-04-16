@@ -78,7 +78,7 @@ public final class WebEngagePlugin: DigiaCEPPlugin {
     // MARK: - DigiaCEPPlugin
 
     public func setup(delegate: DigiaCEPDelegate) {
-        logDebug("setup start suppressionMode=\(config.suppressionMode.rawValue) diagnostics=\(config.diagnosticsEnabled)")
+        logDebug("setup start diagnostics=\(config.diagnosticsEnabled)")
         self.delegate = delegate
         bridge.registerInAppListener(
             onPayload:    { [weak self] data in Task { @MainActor in self?.dispatchMappedPayloads(data) } },
@@ -133,7 +133,6 @@ public final class WebEngagePlugin: DigiaCEPPlugin {
                 "delegateAttached":     String(hasDelegate),
                 "bridgeAvailable":      String(isAvailable),
                 "callbacksRegistered":  String(callbacksRegistered),
-                "suppressionMode":      String(config.suppressionMode.rawValue),
                 "diagnosticsEnabled":   String(config.diagnosticsEnabled),
             ]
         )

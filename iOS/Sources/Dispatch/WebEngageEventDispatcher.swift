@@ -75,43 +75,38 @@ internal final class WebEngageEventDispatcher {
     // MARK: - Inline
 
     private func dispatchInlineEvent(event: DigiaExperienceEvent, payload: InAppPayload) {
-        let eventName: String
-        switch event {
-        case .impressed: eventName = "app_personalization_view"
-        case .clicked:   eventName = "app_personalization_click"
-        case .dismissed: return  // dismissed not tracked for inline slots
-        }
+        if case .dismissed = event { return }
 
         let experimentId: String = {
-            let fromCtx = payload.cepContext["campaignId"] ?? payload.cepContext["experimentId"]
+            let fromCtx = payload.cepContext["experimentId"] ?? payload.cepContext["campaignId"]
             return fromCtx ?? payload.id.components(separatedBy: ":").first ?? payload.id
         }()
-
-        let propertyId: String = {
-            if let p = payload.cepContext["propertyId"] { return p }
-            if let pk = payload.content.placementKey { return pk }
-            let parts = payload.id.components(separatedBy: ":")
-            return parts.count > 1 ? parts.last! : payload.id
-        }()
-
-        let variationId = payload.cepContext["variationId"] ?? payload.id
+        let cachedData = cache.get(experimentId: experimentId)
+        let weExperimentId = str(cachedData?["experimentId"]) ?? experimentId
+        let weVariationId  = str(cachedData?["variationId"])
+                          ?? payload.cepContext["variationId"]
+                          ?? payload.id
 
         var systemData: [String: Any] = [
-            "experiment_id": experimentId,
-            "p_id": propertyId,
-            "id": variationId,
+            "experiment_id": weExperimentId,
+            "id": weVariationId,
         ]
-        if case .clicked(let elementID) = event,
-           let cta = elementID?.trimmingCharacters(in: .whitespaces),
-           !cta.isEmpty {
-            systemData["call_to_action"] = cta
+
+        switch event {
+        case .impressed:
+            bridge.trackSystemEvent(eventName: "notification_view", systemData: systemData, eventData: [:])
+            bridge.trackSystemEvent(eventName: "notification_close", systemData: systemData, eventData: [:])
+            cache.remove(experimentId: experimentId)
+            NSLog("[WebEngageEventDispatcher] dispatched: notification_view + notification_close (inline) experimentId=\(experimentId)")
+        case .clicked(let elementID):
+            if let cta = elementID?.trimmingCharacters(in: .whitespaces), !cta.isEmpty {
+                systemData["call_to_action"] = cta
+            }
+            bridge.trackSystemEvent(eventName: "notification_click", systemData: systemData, eventData: [:])
+            NSLog("[WebEngageEventDispatcher] dispatched: notification_click (inline) experimentId=\(experimentId)")
+        case .dismissed:
+            break
         }
-
-        // Pass JSONValue args as event data
-        let eventData: [String: Any] = payload.content.args.compactMapValues { jsonValueToAny($0) }
-
-        bridge.trackSystemEvent(eventName: eventName, systemData: systemData, eventData: eventData)
-        NSLog("[WebEngageEventDispatcher] dispatched: \(eventName) experimentId=\(experimentId) propertyId=\(propertyId)")
     }
 
     // MARK: - JSONValue → Any

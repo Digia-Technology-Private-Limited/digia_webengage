@@ -30,7 +30,8 @@ class WebEngagePayloadMapper {
     final type = _str(normalized['type'])?.toLowerCase();
     final command = _str(normalized['command'])?.toUpperCase();
     final viewId = _str(normalized['viewId']) ?? '';
-    final variationId = _str(normalized['variationId']) ?? '';
+    final variationId =
+        _str(normalized['variationId'] ?? normalized['id']) ?? '';
 
     if (type == 'inline') {
       final placementKey = _str(normalized['placementKey']) ?? '';
@@ -63,7 +64,11 @@ class WebEngagePayloadMapper {
             'screenId': screenId,
             'args': args,
           },
-          cepContext: <String, dynamic>{'experimentId': campaignId},
+          cepContext: <String, dynamic>{
+            'experimentId': campaignId,
+            'campaignId': campaignId,
+            if (variationId.isNotEmpty) 'variationId': variationId,
+          },
         ),
       );
     }

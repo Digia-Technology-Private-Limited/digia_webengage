@@ -2,7 +2,6 @@ import { WebEngagePlugin } from '../src/WebEngagePlugin';
 import { DigiaExperienceEvent } from '../src/types';
 import type { DigiaCEPDelegate, InAppPayload } from '../src/types';
 import type { WebEngageBridge, WEInAppData } from '../src/WebEngageBridge';
-import { SuppressionMode } from '../src/config';
 
 // ─── FakeBridge ───────────────────────────────────────────────────────────────
 
@@ -158,180 +157,162 @@ describe('WebEngagePlugin — campaign dispatch', () => {
         expect(delegate.invalidated).toHaveLength(0);
     });
 
-    it('dispatches fallback dialog for non-Digia payload in SUPPRESS_ALL mode', () => {
-        const bridge = new FakeBridge();
-        const plugin = makePlugin(bridge, {
-            suppressionMode: SuppressionMode.SUPPRESS_ALL,
-            forcedDialogComponentId: 'coupon_nudge-b6dByb',
+    // ─── In-app system events ─────────────────────────────────────────────────────
+
+    describe('WebEngagePlugin — notification_* system events', () => {
+        const nudgePayload: InAppPayload = {
+            id: 'exp-9',
+            content: { command: 'SHOW_DIALOG', viewId: 'v1' },
+            cepContext: { experimentId: 'exp-9', variationId: 'var-9' },
+        };
+
+        it('dispatches notification_view on Impressed', () => {
+            const bridge = new FakeBridge();
+            const plugin = makePlugin(bridge);
+            plugin.setup(new FakeDelegate());
+
+            plugin.notifyEvent(DigiaExperienceEvent.impressed(), nudgePayload);
+
+            expect(bridge.trackedSystemEvents).toHaveLength(1);
+            expect(bridge.trackedSystemEvents[0].eventName).toBe('notification_view');
+            expect(bridge.trackedSystemEvents[0].systemData['experiment_id']).toBe('exp-9');
+            expect(bridge.trackedSystemEvents[0].systemData['id']).toBe('var-9');
         });
-        const delegate = new FakeDelegate();
 
-        plugin.setup(delegate);
-        bridge.emitInApp({ experimentId: 'exp-2', title: 'plain webengage campaign' });
+        it('dispatches notification_click with call_to_action on Clicked', () => {
+            const bridge = new FakeBridge();
+            const plugin = makePlugin(bridge);
+            plugin.setup(new FakeDelegate());
 
-        expect(delegate.triggered).toHaveLength(1);
-        expect(delegate.triggered[0].id).toBe('exp-2:forced_dialog');
-        expect(delegate.triggered[0].content['command']).toBe('SHOW_DIALOG');
-        expect(delegate.triggered[0].content['viewId']).toBe('coupon_nudge-b6dByb');
-    });
-});
+            plugin.notifyEvent(DigiaExperienceEvent.clicked('cta_apply'), nudgePayload);
 
-// ─── In-app system events ─────────────────────────────────────────────────────
+            expect(bridge.trackedSystemEvents[0].eventName).toBe('notification_click');
+            expect(bridge.trackedSystemEvents[0].systemData['call_to_action']).toBe('cta_apply');
+        });
 
-describe('WebEngagePlugin — notification_* system events', () => {
-    const nudgePayload: InAppPayload = {
-        id: 'exp-9',
-        content: { command: 'SHOW_DIALOG', viewId: 'v1' },
-        cepContext: { experimentId: 'exp-9', variationId: 'var-9' },
-    };
+        it('omits call_to_action when elementId is absent on Clicked', () => {
+            const bridge = new FakeBridge();
+            const plugin = makePlugin(bridge);
+            plugin.setup(new FakeDelegate());
 
-    it('dispatches notification_view on Impressed', () => {
-        const bridge = new FakeBridge();
-        const plugin = makePlugin(bridge);
-        plugin.setup(new FakeDelegate());
+            plugin.notifyEvent(DigiaExperienceEvent.clicked(), nudgePayload);
 
-        plugin.notifyEvent(DigiaExperienceEvent.impressed(), nudgePayload);
+            expect(bridge.trackedSystemEvents[0].eventName).toBe('notification_click');
+            expect(bridge.trackedSystemEvents[0].systemData['call_to_action']).toBeUndefined();
+        });
 
-        expect(bridge.trackedSystemEvents).toHaveLength(1);
-        expect(bridge.trackedSystemEvents[0].eventName).toBe('notification_view');
-        expect(bridge.trackedSystemEvents[0].systemData['experiment_id']).toBe('exp-9');
-        expect(bridge.trackedSystemEvents[0].systemData['id']).toBe('var-9');
-    });
+        it('dispatches notification_close on Dismissed', () => {
+            const bridge = new FakeBridge();
+            const plugin = makePlugin(bridge);
+            plugin.setup(new FakeDelegate());
 
-    it('dispatches notification_click with call_to_action on Clicked', () => {
-        const bridge = new FakeBridge();
-        const plugin = makePlugin(bridge);
-        plugin.setup(new FakeDelegate());
+            plugin.notifyEvent(DigiaExperienceEvent.dismissed(), nudgePayload);
 
-        plugin.notifyEvent(DigiaExperienceEvent.clicked('cta_apply'), nudgePayload);
+            expect(bridge.trackedSystemEvents[0].eventName).toBe('notification_close');
+        });
 
-        expect(bridge.trackedSystemEvents[0].eventName).toBe('notification_click');
-        expect(bridge.trackedSystemEvents[0].systemData['call_to_action']).toBe('cta_apply');
-    });
+        it('dispatches all three in-app events in order', () => {
+            const bridge = new FakeBridge();
+            const plugin = makePlugin(bridge);
+            plugin.setup(new FakeDelegate());
 
-    it('omits call_to_action when elementId is absent on Clicked', () => {
-        const bridge = new FakeBridge();
-        const plugin = makePlugin(bridge);
-        plugin.setup(new FakeDelegate());
+            plugin.notifyEvent(DigiaExperienceEvent.impressed(), nudgePayload);
+            plugin.notifyEvent(DigiaExperienceEvent.clicked('cta_apply'), nudgePayload);
+            plugin.notifyEvent(DigiaExperienceEvent.dismissed(), nudgePayload);
 
-        plugin.notifyEvent(DigiaExperienceEvent.clicked(), nudgePayload);
-
-        expect(bridge.trackedSystemEvents[0].eventName).toBe('notification_click');
-        expect(bridge.trackedSystemEvents[0].systemData['call_to_action']).toBeUndefined();
+            const names = bridge.trackedSystemEvents.map((e) => e.eventName);
+            expect(names).toEqual(['notification_view', 'notification_click', 'notification_close']);
+        });
     });
 
-    it('dispatches notification_close on Dismissed', () => {
-        const bridge = new FakeBridge();
-        const plugin = makePlugin(bridge);
-        plugin.setup(new FakeDelegate());
+    // ─── Inline system events ─────────────────────────────────────────────────────
 
-        plugin.notifyEvent(DigiaExperienceEvent.dismissed(), nudgePayload);
+    describe('WebEngagePlugin — app_personalization_* system events', () => {
+        const inlinePayload: InAppPayload = {
+            id: 'cmp-1:hero_slot',
+            content: {
+                type: 'inline',
+                placementKey: 'hero_slot',
+                args: { foo: 'bar' },
+            },
+            cepContext: {
+                campaignId: 'cmp-1',
+                variationId: 'var-1',
+                propertyId: 'hero_slot',
+            },
+        };
 
-        expect(bridge.trackedSystemEvents[0].eventName).toBe('notification_close');
+        it('dispatches app_personalization_view on Impressed', () => {
+            const bridge = new FakeBridge();
+            const plugin = makePlugin(bridge);
+            plugin.setup(new FakeDelegate());
+
+            plugin.notifyEvent(DigiaExperienceEvent.impressed(), inlinePayload);
+
+            expect(bridge.trackedSystemEvents[0].eventName).toBe('app_personalization_view');
+            expect(bridge.trackedSystemEvents[0].systemData['p_id']).toBe('hero_slot');
+            expect(bridge.trackedSystemEvents[0].systemData['experiment_id']).toBe('cmp-1');
+            expect(bridge.trackedSystemEvents[0].systemData['id']).toBe('var-1');
+        });
+
+        it('dispatches app_personalization_click with cta and args on Clicked', () => {
+            const bridge = new FakeBridge();
+            const plugin = makePlugin(bridge);
+            plugin.setup(new FakeDelegate());
+
+            plugin.notifyEvent(DigiaExperienceEvent.clicked('cta_inline'), inlinePayload);
+
+            expect(bridge.trackedSystemEvents[0].eventName).toBe('app_personalization_click');
+            expect(bridge.trackedSystemEvents[0].systemData['call_to_action']).toBe('cta_inline');
+            expect(bridge.trackedSystemEvents[0].eventData['foo']).toBe('bar');
+        });
+
+        it('does not dispatch any event for inline Dismissed (no WE system event exists)', () => {
+            const bridge = new FakeBridge();
+            const plugin = makePlugin(bridge);
+            plugin.setup(new FakeDelegate());
+
+            plugin.notifyEvent(DigiaExperienceEvent.dismissed(), inlinePayload);
+
+            expect(bridge.trackedSystemEvents).toHaveLength(0);
+        });
+
+        it('dispatches exactly 2 events for impressed + clicked (skips dismissed)', () => {
+            const bridge = new FakeBridge();
+            const plugin = makePlugin(bridge);
+            plugin.setup(new FakeDelegate());
+
+            plugin.notifyEvent(DigiaExperienceEvent.impressed(), inlinePayload);
+            plugin.notifyEvent(DigiaExperienceEvent.clicked('cta_inline'), inlinePayload);
+            plugin.notifyEvent(DigiaExperienceEvent.dismissed(), inlinePayload);
+
+            expect(bridge.trackedSystemEvents).toHaveLength(2);
+            expect(bridge.trackedSystemEvents.map((e) => e.eventName)).toEqual([
+                'app_personalization_view',
+                'app_personalization_click',
+            ]);
+        });
     });
 
-    it('dispatches all three in-app events in order', () => {
-        const bridge = new FakeBridge();
-        const plugin = makePlugin(bridge);
-        plugin.setup(new FakeDelegate());
+    // ─── Screen forwarding ────────────────────────────────────────────────────────
 
-        plugin.notifyEvent(DigiaExperienceEvent.impressed(), nudgePayload);
-        plugin.notifyEvent(DigiaExperienceEvent.clicked('cta_apply'), nudgePayload);
-        plugin.notifyEvent(DigiaExperienceEvent.dismissed(), nudgePayload);
+    describe('WebEngagePlugin — screen forwarding', () => {
+        it('forwards screen name to bridge', () => {
+            const bridge = new FakeBridge();
+            const plugin = makePlugin(bridge);
+            plugin.setup(new FakeDelegate());
 
-        const names = bridge.trackedSystemEvents.map((e) => e.eventName);
-        expect(names).toEqual(['notification_view', 'notification_click', 'notification_close']);
-    });
-});
+            plugin.forwardScreen('HomePage');
 
-// ─── Inline system events ─────────────────────────────────────────────────────
-
-describe('WebEngagePlugin — app_personalization_* system events', () => {
-    const inlinePayload: InAppPayload = {
-        id: 'cmp-1:hero_slot',
-        content: {
-            type: 'inline',
-            placementKey: 'hero_slot',
-            args: { foo: 'bar' },
-        },
-        cepContext: {
-            campaignId: 'cmp-1',
-            variationId: 'var-1',
-            propertyId: 'hero_slot',
-        },
-    };
-
-    it('dispatches app_personalization_view on Impressed', () => {
-        const bridge = new FakeBridge();
-        const plugin = makePlugin(bridge);
-        plugin.setup(new FakeDelegate());
-
-        plugin.notifyEvent(DigiaExperienceEvent.impressed(), inlinePayload);
-
-        expect(bridge.trackedSystemEvents[0].eventName).toBe('app_personalization_view');
-        expect(bridge.trackedSystemEvents[0].systemData['p_id']).toBe('hero_slot');
-        expect(bridge.trackedSystemEvents[0].systemData['experiment_id']).toBe('cmp-1');
-        expect(bridge.trackedSystemEvents[0].systemData['id']).toBe('var-1');
+            expect(bridge.navigatedScreens).toEqual(['HomePage']);
+        });
     });
 
-    it('dispatches app_personalization_click with cta and args on Clicked', () => {
-        const bridge = new FakeBridge();
-        const plugin = makePlugin(bridge);
-        plugin.setup(new FakeDelegate());
+    // ─── identifier ───────────────────────────────────────────────────────────────
 
-        plugin.notifyEvent(DigiaExperienceEvent.clicked('cta_inline'), inlinePayload);
-
-        expect(bridge.trackedSystemEvents[0].eventName).toBe('app_personalization_click');
-        expect(bridge.trackedSystemEvents[0].systemData['call_to_action']).toBe('cta_inline');
-        expect(bridge.trackedSystemEvents[0].eventData['foo']).toBe('bar');
+    describe('WebEngagePlugin — identifier', () => {
+        it('returns "webengage"', () => {
+            const plugin = makePlugin(new FakeBridge());
+            expect(plugin.identifier).toBe('webengage');
+        });
     });
-
-    it('does not dispatch any event for inline Dismissed (no WE system event exists)', () => {
-        const bridge = new FakeBridge();
-        const plugin = makePlugin(bridge);
-        plugin.setup(new FakeDelegate());
-
-        plugin.notifyEvent(DigiaExperienceEvent.dismissed(), inlinePayload);
-
-        expect(bridge.trackedSystemEvents).toHaveLength(0);
-    });
-
-    it('dispatches exactly 2 events for impressed + clicked (skips dismissed)', () => {
-        const bridge = new FakeBridge();
-        const plugin = makePlugin(bridge);
-        plugin.setup(new FakeDelegate());
-
-        plugin.notifyEvent(DigiaExperienceEvent.impressed(), inlinePayload);
-        plugin.notifyEvent(DigiaExperienceEvent.clicked('cta_inline'), inlinePayload);
-        plugin.notifyEvent(DigiaExperienceEvent.dismissed(), inlinePayload);
-
-        expect(bridge.trackedSystemEvents).toHaveLength(2);
-        expect(bridge.trackedSystemEvents.map((e) => e.eventName)).toEqual([
-            'app_personalization_view',
-            'app_personalization_click',
-        ]);
-    });
-});
-
-// ─── Screen forwarding ────────────────────────────────────────────────────────
-
-describe('WebEngagePlugin — screen forwarding', () => {
-    it('forwards screen name to bridge', () => {
-        const bridge = new FakeBridge();
-        const plugin = makePlugin(bridge);
-        plugin.setup(new FakeDelegate());
-
-        plugin.forwardScreen('HomePage');
-
-        expect(bridge.navigatedScreens).toEqual(['HomePage']);
-    });
-});
-
-// ─── identifier ───────────────────────────────────────────────────────────────
-
-describe('WebEngagePlugin — identifier', () => {
-    it('returns "webengage"', () => {
-        const plugin = makePlugin(new FakeBridge());
-        expect(plugin.identifier).toBe('webengage');
-    });
-});

@@ -50,6 +50,8 @@ abstract class WebEngageBridge {
   /// After the delay the gate opens so the campaign can show again in a future
   /// session if WE frequency rules permit.
   void notifyDismissed(String campaignId);
+
+  Duration get gateReleaseDelay;
 }
 
 /// Production [WebEngageBridge] backed by `webengage_flutter` and
@@ -99,6 +101,9 @@ class WebEngageSdkBridge implements WebEngageBridge {
   static const _gateReleaseDelay = Duration(seconds: 1);
 
   void Function(String)? _onInAppDismissed;
+
+  @override
+  Duration get gateReleaseDelay => _gateReleaseDelay;
 
   @override
   void registerCallbacks({

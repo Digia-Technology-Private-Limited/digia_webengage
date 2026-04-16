@@ -4,6 +4,7 @@
 //
 
 #import "DigiaSuppressPlugin.h"
+#import <objc/message.h>
 
 // Valid command values that identify a Digia nudge campaign.
 static NSString * const kCommandShowDialog       = @"SHOW_DIALOG";
@@ -51,9 +52,75 @@ static DigiaSuppressPlugin *_shared = nil;
 // MARK: - FlutterMethodCallDelegate
 
 - (void)handleMethodCall:(FlutterMethodCall *)call result:(FlutterResult)result {
-    // `configure` was previously used to toggle suppressRendering globally.
-    // Suppression is now handled per-campaign in notificationPrepared:shouldStop:.
-    result(nil);
+    if ([call.method isEqualToString:@"trackSystemEvent"]) {
+        NSDictionary *args       = call.arguments;
+        NSString     *eventName  = args[@"eventName"];
+        NSDictionary *systemData = args[@"systemData"] ?: @{};
+        NSDictionary *eventData  = args[@"eventData"]  ?: @{};
+        if (eventName.length) {
+            // Build the andValue dict the same way WebEngage fires notification_view
+            // internally: put campaign data under "system_data_overrides" so the
+            // WEGEvent factory merges it into system_data (not event_data).
+            NSMutableDictionary *andValue = [NSMutableDictionary dictionary];
+            if (systemData.count) {
+                andValue[@"system_data_overrides"] = systemData;
+            }
+            if (eventData.count) {
+                andValue[@"event_data_overrides"] = eventData;
+            }
+
+            NSLog(@"[DigiaSuppressPlugin] trackSystemEvent — name=%@ andValue=%@", eventName, andValue);
+
+            // Mark sessionCloses BEFORE firing the event so re-evaluation
+            // triggered by the event already sees the mark.
+            if ([eventName isEqualToString:@"notification_close"]) {
+                NSString *expId = systemData[@"experiment_id"];
+                if (expId.length > 0) {
+                    Class rendererCls = NSClassFromString(@"WEGRenderer");
+                    SEL sharedSel2 = NSSelectorFromString(@"sharedInstance");
+                    SEL closesSel  = NSSelectorFromString(@"sessionCloses");
+                    if (rendererCls && [rendererCls respondsToSelector:sharedSel2]) {
+                        id renderer = ((id (*)(Class, SEL))objc_msgSend)(rendererCls, sharedSel2);
+                        if (renderer && [renderer respondsToSelector:closesSel]) {
+                            NSMutableDictionary *closes = ((id (*)(id, SEL))objc_msgSend)(renderer, closesSel);
+                            if ([closes isKindOfClass:[NSMutableDictionary class]]) {
+                                NSString *closeKey = [expId stringByAppendingString:@"_close"];
+                                closes[closeKey] = @1;
+                                NSLog(@"[DigiaSuppressPlugin] Marked %@ in sessionCloses: %@", closeKey, closes);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Use trackSDKEventWithName:andValue: which bypasses reserved-name
+            // guards and routes through the full SDK event pipeline.
+            SEL sharedSel = NSSelectorFromString(@"sharedInstance");
+            SEL trackSel  = NSSelectorFromString(@"trackSDKEventWithName:andValue:");
+
+            Class analyticsCls = NSClassFromString(@"WEGAnalyticsImpl");
+            if (analyticsCls) {
+                typedef id  (*SharedFn)(Class, SEL);
+                typedef void (*TrackFn)(id, SEL, NSString *, NSDictionary *);
+
+                id analytics = ((SharedFn)objc_msgSend)(analyticsCls, sharedSel);
+                if (analytics) {
+                    ((TrackFn)objc_msgSend)(analytics, trackSel, eventName, andValue);
+                    NSLog(@"[DigiaSuppressPlugin] trackSystemEvent — fired: %@", eventName);
+                } else {
+                    NSLog(@"[DigiaSuppressPlugin] trackSystemEvent — analytics not available");
+                }
+            }
+
+        } else {
+            NSLog(@"[DigiaSuppressPlugin] trackSystemEvent: skipped — eventName is empty");
+        }
+        result(nil);
+    } else {
+        // `configure` was previously used to toggle suppressRendering globally.
+        // Suppression is now handled per-campaign in notificationPrepared:shouldStop:.
+        result(nil);
+    }
 }
 
 // MARK: - WEGInAppNotificationProtocol
@@ -63,15 +130,16 @@ static DigiaSuppressPlugin *_shared = nil;
 
     // ── Step 1: Identify campaign type ──────────────────────────────────────
     if (![self isDigiaCampaign:inAppNotificationData]) {
+        NSLog(@"[DigiaSuppressPlugin] notificationPrepared — non-Digia campaign, allowing normal rendering");
         // Normal campaign → allow WebEngage SDK to render it as usual.
         return inAppNotificationData;
     }
-
     // ── Step 2: Digia campaign → suppress WebEngage's own renderer ──────────
     *stopRendering = YES;
 
     // ── Step 3: Ensure experimentId is forwarded under the canonical key ─────
-    NSString *experimentId = inAppNotificationData[@"experimentId"]
+    NSString *experimentId = inAppNotificationData[@"notificationEncId"]
+                          ?: inAppNotificationData[@"experimentId"]
                           ?: inAppNotificationData[@"experiment_id"];
     NSMutableDictionary *payload = [inAppNotificationData mutableCopy];
     if (experimentId && !payload[@"experimentId"]) {
@@ -89,7 +157,8 @@ static DigiaSuppressPlugin *_shared = nil;
 }
 
 - (void)notificationDismissed:(NSDictionary<NSString *, id> *)inAppNotificationData {
-    NSString *experimentId = inAppNotificationData[@"experimentId"]
+    NSString *experimentId = inAppNotificationData[@"notificationEncId"]
+                          ?: inAppNotificationData[@"experimentId"]
                           ?: inAppNotificationData[@"experiment_id"];
 
     FlutterMethodChannel *channel = self.channel;

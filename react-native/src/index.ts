@@ -17,7 +17,7 @@ export type {
 export { DigiaExperienceEvent } from './types';
 
 // Config
-export { SuppressionMode, defaultConfig, shouldSuppressInAppRendering } from './config';
+export { defaultConfig } from './config';
 export type { WebEngagePluginConfig } from './config';
 
 // Bridge (exported for custom bridge injection / testing)

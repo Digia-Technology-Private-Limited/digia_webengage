@@ -63,10 +63,10 @@ class WebEngageEventBridge {
       eventData: const <String, dynamic>{},
     );
 
-    if (event is ExperienceImpressed) {
-      // Release the Dart-side plugin gate so the next queued campaign can show.
-      _bridge.notifyDismissed(experimentId);
-    }
+    // if (event is ExperienceImpressed) {
+    //   // Release the Dart-side plugin gate so the next queued campaign can show.
+    //   _bridge.notifyDismissed(experimentId);
+    // }
   }
 
   Future<void> _dispatchInlineEvent(
@@ -96,7 +96,8 @@ class WebEngageEventBridge {
         eventData: const <String, dynamic>{},
       );
       // Release the Dart-side plugin gate so the next queued campaign can show.
-      _bridge.notifyDismissed(experimentId);
+      Future.delayed(_bridge.gateReleaseDelay,
+          () => _bridge.notifyDismissed(experimentId));
     } else if (event is ExperienceClicked) {
       final cta = event.elementId?.trim();
       if (cta != null && cta.isNotEmpty) systemData['call_to_action'] = cta;

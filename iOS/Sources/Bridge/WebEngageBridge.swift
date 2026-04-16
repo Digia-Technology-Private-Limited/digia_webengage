@@ -1,6 +1,5 @@
 @preconcurrency import Foundation
 @preconcurrency import WebEngage
-@preconcurrency import WEPersonalization
 
 // MARK: - Bridge Protocol
 
@@ -68,21 +67,59 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
         onInvalidateCallback = onInvalidate
         // NOTE: The delegate binding happens at WebEngage init time in AppDelegate via
         // WebEngagePlugin.makeWebEngageConfig(). Nothing to do here at runtime.
-        logDebug("register_inapp_listener mode=\(config.suppressionMode.rawValue)")
+        logDebug("register_inapp_listener")
     }
 
     func registerInlineListener(
         onInlineCampaign: @escaping (String, String, [String: Any], [String: Any]) -> Void
     ) {
-        onInlineCampaignCallback = onInlineCampaign
-        WEPersonalization.shared.registerWECampaignCallback(self)
-        logDebug("register_inline_listener")
+        // WEPersonalization not available — inline campaigns are unsupported.
+        logDebug("register_inline_listener skipped (WEPersonalization not linked)")
     }
 
     func trackSystemEvent(eventName: String, systemData: [String: Any], eventData: [String: Any]) {
-        var attrs = systemData
-        eventData.forEach { attrs[$0] = $1 }
-        WebEngage.sharedInstance().analytics.trackSystemEvent(withName: eventName, andValue: attrs)
+        // Build the andValue dict the same way WebEngage fires notification_view
+        // internally: put campaign data under "system_data_overrides" so the
+        // WEGEvent factory merges it into system_data (not event_data).
+        var andValue: [String: Any] = [:]
+        if !systemData.isEmpty {
+            andValue["system_data_overrides"] = systemData
+        }
+        if !eventData.isEmpty {
+            andValue["event_data_overrides"] = eventData
+        }
+
+        logDebug("trackSystemEvent name=\(eventName) andValue=\(andValue)")
+
+        // Use trackSDKEventWithName:andValue: which bypasses reserved-name
+        // guards and routes through the full SDK event pipeline.
+        // Mark sessionCloses BEFORE firing the event so re-evaluation
+        // triggered by the event already sees the mark.
+        if eventName == "notification_close",
+           let expId = systemData["experiment_id"] as? String, !expId.isEmpty {
+            if let rendererCls = NSClassFromString("WEGRenderer"),
+               let renderer = (rendererCls as AnyObject).perform(NSSelectorFromString("sharedInstance"))?.takeUnretainedValue(),
+               let closes = renderer.perform(NSSelectorFromString("sessionCloses"))?.takeUnretainedValue() as? NSMutableDictionary {
+                let closeKey = expId + "_close"
+                closes[closeKey] = 1
+                logDebug("Marked \(closeKey) in sessionCloses")
+            }
+        }
+
+        let analyticsCls: AnyClass? = NSClassFromString("WEGAnalyticsImpl")
+        if let analyticsCls = analyticsCls {
+            let sharedSel = NSSelectorFromString("sharedInstance")
+            let trackSel = NSSelectorFromString("trackSDKEventWithName:andValue:")
+
+            if let analytics = (analyticsCls as AnyObject).perform(sharedSel)?.takeUnretainedValue() {
+                if let result = analytics.perform(trackSel, with: eventName, with: andValue) {
+                    _ = result.takeUnretainedValue()
+                }
+                logDebug("trackSystemEvent fired: \(eventName)")
+            } else {
+                logDebug("trackSystemEvent analytics not available")
+            }
+        }
     }
 
     func navigateScreen(_ name: String) {
@@ -98,9 +135,9 @@ internal final class WebEngageSdkBridge: NSObject, WebEngageBridgeProtocol, @unc
     }
 
     func unregisterInlineListener() {
-        logDebug("unregister_inline_listener")
-        WEPersonalization.shared.unregisterWECampaignCallback(self)
+        // WEPersonalization not available — no-op.
         onInlineCampaignCallback = nil
+        logDebug("unregister_inline_listener skipped (WEPersonalization not linked)")
     }
 
     func isAvailable() -> Bool { true }
@@ -124,58 +161,45 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
         _ inAppNotificationData: [String: Any]!,
         shouldStop stopRendering: UnsafeMutablePointer<ObjCBool>!
     ) -> [AnyHashable: Any]! {
-        // Unconditional log — confirms WebEngage is calling the delegate.
-        NSLog("[DigiaWEBridge] ✅ notificationPrepared called keys=\(inAppNotificationData?.keys.sorted() ?? [])")
+        NSLog("[DigiaWEBridge] notificationPrepared called keys=\(inAppNotificationData?.keys.sorted() ?? [])")
 
         guard let raw = inAppNotificationData else {
             logWarning("in-app prepared with nil data; skipping")
             return inAppNotificationData
         }
 
-        let map: [String: Any] = raw
-
-        let normalizedMap  = normalizeWithDigiaContract(map)
-        let isDigiaCampaign = (normalizedMap["digiaContractSource"] as? String)?.isEmpty == false
-
-        let suppress = shouldSuppressInAppRendering(
-            mode: config.suppressionMode,
-            isDigiaCampaign: isDigiaCampaign
-        )
-        if suppress { stopRendering?.pointee = true }
-
-        // Prefer keys from normalizedMap (contract extraction may have resolved them).
-        let experimentId = str(normalizedMap["experimentId"] ?? normalizedMap["experiment_id"]
-                                ?? map["experimentId"] ?? map["experiment_id"]) ?? ""
-        let layoutId     = str(normalizedMap["layoutId"]     ?? normalizedMap["layout_id"]
-                                ?? map["layoutId"] ?? map["layout_id"])     ?? ""
-        let variationId  = str(normalizedMap["variationId"]  ?? normalizedMap["variation_id"]
-                                ?? map["variationId"] ?? map["variation_id"])  ?? ""
-
-        logDebug("inapp_prepared exp=\(experimentId) isDigia=\(isDigiaCampaign) suppress=\(suppress)")
-
-        // Always dispatch Digia campaigns regardless of suppressionMode so the
-        // CEP delegate can render them. Non-Digia campaigns in suppressAll mode
-        // are also dispatched (forced rendering override).
-        let shouldDispatch = isDigiaCampaign || config.suppressionMode == .suppressAll
-        guard shouldDispatch else {
-            logDebug("inapp_prepared skip_dispatch exp=\(experimentId) reason=non_digia_campaign")
+        // ── Step 1: Identify campaign type (mirrors Flutter isDigiaCampaign) ────
+        if !isDigiaCampaign(raw) {
+            logDebug("inapp_prepared non-Digia campaign, allowing normal rendering")
             return inAppNotificationData
         }
 
+        // ── Step 2: Digia campaign → suppress WebEngage's own renderer ──────────
+        stopRendering?.pointee = true
+
+        // ── Step 3: Ensure experimentId is forwarded under the canonical key ────
+        let experimentId = str(raw["notificationEncId"]
+                               ?? raw["experimentId"] ?? raw["experiment_id"]) ?? ""
+        var payload = raw
+        if !experimentId.isEmpty, payload["experimentId"] == nil {
+            payload["experimentId"] = experimentId
+        }
+
+        logDebug("inapp_prepared exp=\(experimentId) isDigia=true suppress=true")
+
+        // ── Step 4: Cache for event dispatch ────────────────────────────────────
         if !experimentId.isEmpty {
-            var cacheEntry = normalizedMap
+            var cacheEntry = payload
             cacheEntry["experimentId"] = experimentId
-            cacheEntry["layoutId"]     = layoutId
-            cacheEntry["variationId"]  = variationId
+            let layoutId    = str(raw["layoutId"] ?? raw["layout_id"]) ?? ""
+            let variationId = str(raw["variationId"] ?? raw["variation_id"]) ?? ""
+            if !layoutId.isEmpty    { cacheEntry["layoutId"]    = layoutId }
+            if !variationId.isEmpty { cacheEntry["variationId"] = variationId }
             dataCache.put(experimentId: experimentId, data: cacheEntry)
         }
 
-        var enriched = normalizedMap
-        if !experimentId.isEmpty { enriched["experimentId"] = experimentId }
-        if !layoutId.isEmpty     { enriched["layoutId"]     = layoutId }
-        if !variationId.isEmpty  { enriched["variationId"]  = variationId }
-
-        onPayloadCallback?(enriched)
+        // ── Step 5: Forward to plugin ───────────────────────────────────────────
+        onPayloadCallback?(payload)
         return inAppNotificationData
     }
 
@@ -185,87 +209,56 @@ extension WebEngageSdkBridge: WEGInAppNotificationProtocol {
     }
 
     @objc func notificationDismissed(_ inAppNotificationData: [String: Any]!) {
-        let id = str(inAppNotificationData?["experimentId"] ?? inAppNotificationData?["experiment_id"]) ?? ""
+        let id = str(inAppNotificationData?["notificationEncId"]
+                     ?? inAppNotificationData?["experimentId"]
+                     ?? inAppNotificationData?["experiment_id"]) ?? ""
         logDebug("inapp_dismissed exp=\(id)")
         if !id.isEmpty { onInvalidateCallback?(id) }
     }
 
-    // Correct ObjC selector: notification:clickedWithAction:
     @objc func notification(_ inAppNotificationData: [String: Any]!, clickedWithAction actionId: String!) {
         let id = inAppNotificationData?["experimentId"] as? String ?? ""
         logDebug("inapp_clicked exp=\(id) actionId=\(actionId ?? "")")
     }
 
-    // MARK: - Suppression helper
+    // MARK: - Campaign Type Identification (mirrors Flutter isDigiaCampaign)
 
-    private func shouldSuppressInAppRendering(mode: SuppressionMode, isDigiaCampaign: Bool) -> Bool {
-        switch mode {
-        case .passThrough:    return false
-        case .suppressAll:    return true
-        case .suppressDigiaOnly: return isDigiaCampaign
-        }
-    }
-}
-
-// MARK: - WECampaignCallback (WEPersonalization inline)
-
-extension WebEngageSdkBridge: WECampaignCallback {
-
-    // Called when campaign data is received — primary hook for inline slots.
-    func onCampaignPrepared(_ data: WECampaignData) -> WECampaignData {
-        let campaignId   = data.campaignId ?? ""
-        // targetViewId is now an Int tag in the new API; stringify for downstream.
-        let targetViewId = String(data.targetViewTag)
-
-        guard !campaignId.isEmpty else { return data }
-
-        let customData = extractCustomData(data)
-        let metadata   = extractInlineMetadata(data)
-
-        logDebug("inline_prepared campaignId=\(campaignId) targetViewTag=\(data.targetViewTag)")
-
-        if customData.isEmpty {
-            logWarning("inline_prepared skipped campaignId=\(campaignId) reason=missing_custom_data")
-        } else {
-            onInlineCampaignCallback?(campaignId, targetViewId, customData, metadata)
-        }
-        return data
+    private func isDigiaCampaign(_ data: [String: Any]) -> Bool {
+        return hasDigiaContractKeys(data) || containsDigiaHtml(data)
     }
 
-    func onCampaignShown(data: WECampaignData) {
-        logDebug("inline_shown campaignId=\(data.campaignId ?? "") targetViewTag=\(data.targetViewTag)")
-    }
+    private func hasDigiaContractKeys(_ data: [String: Any]) -> Bool {
+        guard let viewId = (data["viewId"] as? String)?.trimmingCharacters(in: .whitespaces),
+              !viewId.isEmpty else { return false }
 
-    func onCampaignClicked(actionId: String, deepLink: String, data: WECampaignData) -> Bool {
-        logDebug("inline_clicked campaignId=\(data.campaignId ?? "") actionId=\(actionId)")
+        let type    = data["type"]    as? String
+        let command = (data["command"] as? String)?.uppercased()
+
+        if type != nil { return true }
+        if command == "SHOW_DIALOG" || command == "SHOW_BOTTOM_SHEET" { return true }
         return false
     }
 
-    func onCampaignException(_ campaignId: String?, _ targetViewId: String, _ exception: any Error) {
-        logWarning("inline_exception campaignId=\(campaignId ?? "") targetViewId=\(targetViewId) error=\(exception.localizedDescription)")
-    }
-
-    // MARK: - Inline helpers
-
-    private func extractCustomData(_ data: WECampaignData) -> [String: Any] {
-        // WECampaignContent.custom holds the integrator-supplied custom data dict.
-        return data.content?.custom ?? [:]
-    }
-
-    private func extractInlineMetadata(_ data: WECampaignData) -> [String: Any] {
-        let campaignId   = data.campaignId ?? ""
-        let targetViewId = String(data.targetViewTag)
-        var meta: [String: Any] = [
-            "campaignId":   campaignId,
-            "targetViewId": targetViewId,
-            "propertyId":   targetViewId,
-        ]
-        if let vid = (data as AnyObject).value(forKey: "variationId") as? String, !vid.isEmpty {
-            meta["variationId"] = vid
+    private func containsDigiaHtml(_ node: Any) -> Bool {
+        if let s = node as? String {
+            let lower = s.lowercased()
+            return lower.contains("<digia") || lower.contains("digia-payload")
         }
-        return meta
+        if let dict = node as? [String: Any] {
+            for value in dict.values {
+                if containsDigiaHtml(value) { return true }
+            }
+        }
+        if let array = node as? [Any] {
+            for item in array {
+                if containsDigiaHtml(item) { return true }
+            }
+        }
+        return false
     }
 }
+
+
 
 // MARK: - String helper
 

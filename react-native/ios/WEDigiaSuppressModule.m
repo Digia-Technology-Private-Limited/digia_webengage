@@ -8,6 +8,9 @@
 //
 
 #import "WEDigiaSuppressModule.h"
+#import "WEDigiaSuppressProxy.h"
+#import <WebEngage/WebEngage.h>
+#import <objc/message.h>
 
 static NSString * const kCommandShowDialog      = @"SHOW_DIALOG";
 static NSString * const kCommandShowBottomSheet = @"SHOW_BOTTOM_SHEET";
@@ -28,6 +31,14 @@ static WEDigiaSuppressModule *_shared = nil;
     self = [super init];
     if (self) {
         _shared = self;
+        [WEDigiaSuppressProxy shared].realDelegate = self;
+
+        // Pre-seed _listenerCount = 1 so sendEventWithName: never silently drops
+        // events when JS uses DeviceEventEmitter (which doesn't call native
+        // addListener: on iOS and therefore never increments the count).
+        [self addListener:kEventPrepared];
+
+        NSLog(@"[WEDigiaSuppressModule] init — module created, set as realDelegate on WEDigiaSuppressProxy");
     }
     return self;
 }
@@ -41,6 +52,69 @@ RCT_EXPORT_METHOD(install) {
     // to confirm the module loaded.
 }
 
+RCT_EXPORT_METHOD(trackSystemEvent:(NSString *)eventName
+                  systemData:(NSDictionary *)systemData
+                   eventData:(NSDictionary *)eventData) {
+    if (!eventName.length) {
+        NSLog(@"[WEDigiaSuppressModule] trackSystemEvent: skipped — eventName is empty");
+        return;
+    }
+
+    // Build the andValue dict the same way WebEngage fires notification_view
+    // internally: put campaign data under "system_data_overrides" so the
+    // WEGEvent factory merges it into system_data (not event_data).
+    NSMutableDictionary *andValue = [NSMutableDictionary dictionary];
+    if (systemData.count) {
+        andValue[@"system_data_overrides"] = systemData;
+    }
+    if (eventData.count) {
+        andValue[@"event_data_overrides"] = eventData;
+    }
+
+    NSLog(@"[WEDigiaSuppressModule] trackSystemEvent — name=%@ andValue=%@", eventName, andValue);
+
+    // Mark sessionCloses BEFORE firing the event so re-evaluation
+    // triggered by the event already sees the mark.
+    if ([eventName isEqualToString:@"notification_close"]) {
+        NSString *expId = systemData[@"experiment_id"];
+        if (expId.length > 0) {
+            Class rendererCls = NSClassFromString(@"WEGRenderer");
+            SEL sharedSel2 = NSSelectorFromString(@"sharedInstance");
+            SEL closesSel  = NSSelectorFromString(@"sessionCloses");
+            if (rendererCls && [rendererCls respondsToSelector:sharedSel2]) {
+                id renderer = ((id (*)(Class, SEL))objc_msgSend)(rendererCls, sharedSel2);
+                if (renderer && [renderer respondsToSelector:closesSel]) {
+                    NSMutableDictionary *closes = ((id (*)(id, SEL))objc_msgSend)(renderer, closesSel);
+                    if ([closes isKindOfClass:[NSMutableDictionary class]]) {
+                        NSString *closeKey = [expId stringByAppendingString:@"_close"];
+                        closes[closeKey] = @1;
+                        NSLog(@"[WEDigiaSuppressModule] Marked %@ in sessionCloses", closeKey);
+                    }
+                }
+            }
+        }
+    }
+
+    // Use trackSDKEventWithName:andValue: which bypasses reserved-name
+    // guards and routes through the full SDK event pipeline.
+    SEL sharedSel = NSSelectorFromString(@"sharedInstance");
+    SEL trackSel  = NSSelectorFromString(@"trackSDKEventWithName:andValue:");
+
+    Class analyticsCls = NSClassFromString(@"WEGAnalyticsImpl");
+    if (analyticsCls) {
+        typedef id  (*SharedFn)(Class, SEL);
+        typedef void (*TrackFn)(id, SEL, NSString *, NSDictionary *);
+
+        id analytics = ((SharedFn)objc_msgSend)(analyticsCls, sharedSel);
+        if (analytics) {
+            ((TrackFn)objc_msgSend)(analytics, trackSel, eventName, andValue);
+            NSLog(@"[WEDigiaSuppressModule] trackSystemEvent — fired: %@", eventName);
+        } else {
+            NSLog(@"[WEDigiaSuppressModule] trackSystemEvent — analytics not available");
+        }
+    }
+}
+
 // Required by RCTEventEmitter.
 - (NSArray<NSString *> *)supportedEvents {
     return @[kEventPrepared, kEventDismissed];
@@ -49,11 +123,13 @@ RCT_EXPORT_METHOD(install) {
 // RCTEventEmitter override — called when JS adds its first listener.
 - (void)startObserving {
     // no-op: _shared is set in init
+    NSLog(@"[WEDigiaSuppressModule] startObserving — JS added first listener");
 }
 
 // RCTEventEmitter override — called when the last JS listener is removed.
 - (void)stopObserving {
     // no-op: keep _shared alive for the module's lifetime
+    NSLog(@"[WEDigiaSuppressModule] stopObserving — all JS listeners removed");
 }
 
 // MARK: - WEGInAppNotificationProtocol
@@ -61,26 +137,36 @@ RCT_EXPORT_METHOD(install) {
 - (NSDictionary *)notificationPrepared:(NSDictionary<NSString *, id> *)inAppNotificationData
                              shouldStop:(BOOL *)stopRendering {
 
+    NSLog(@"[WEDigiaSuppressModule] notificationPrepared called. Keys: %@", inAppNotificationData.allKeys);
+    NSLog(@"[WEDigiaSuppressModule] notificationPrepared data: %@", inAppNotificationData);
+
     // ── Step 1: Identify campaign type ──────────────────────────────────────
     if (![self isDigiaCampaign:inAppNotificationData]) {
+        NSLog(@"[WEDigiaSuppressModule] notificationPrepared: NOT a Digia campaign — allowing WebEngage to render");
         // Normal campaign → allow WebEngage SDK to render.
         return inAppNotificationData;
     }
 
+    NSLog(@"[WEDigiaSuppressModule] notificationPrepared: IS a Digia campaign — suppressing render");
+
     // ── Step 2: Digia campaign → suppress WebEngage's renderer ──────────────
     *stopRendering = YES;
 
-    // ── Step 3: Normalise experimentId key ──────────────────────────────────
-    NSString *experimentId = inAppNotificationData[@"experimentId"]
+    // ── Step 3: Normalise experimentId ────────────────────────────────────
+    NSString *experimentId = inAppNotificationData[@"notificationEncId"]
+                          ?: inAppNotificationData[@"experimentId"]
                           ?: inAppNotificationData[@"experiment_id"];
     NSMutableDictionary *payload = [inAppNotificationData mutableCopy];
     if (experimentId && !payload[@"experimentId"]) {
         payload[@"experimentId"] = experimentId;
     }
 
+    NSLog(@"[WEDigiaSuppressModule] notificationPrepared: emitting %@ with experimentId=%@", kEventPrepared, experimentId);
+
     // ── Step 4: Emit to JS on main thread ────────────────────────────────────
     NSDictionary *immutablePayload = [payload copy];
     dispatch_async(dispatch_get_main_queue(), ^{
+        NSLog(@"[WEDigiaSuppressModule] sendEventWithName:%@ body keys: %@", kEventPrepared, immutablePayload.allKeys);
         [self sendEventWithName:kEventPrepared body:immutablePayload];
     });
 
@@ -88,7 +174,8 @@ RCT_EXPORT_METHOD(install) {
 }
 
 - (void)notificationDismissed:(NSDictionary<NSString *, id> *)inAppNotificationData {
-    NSString *experimentId = inAppNotificationData[@"experimentId"]
+    NSString *experimentId = inAppNotificationData[@"notificationEncId"]
+                          ?: inAppNotificationData[@"experimentId"]
                           ?: inAppNotificationData[@"experiment_id"];
     NSDictionary *args = @{ @"experimentId": experimentId ?: [NSNull null] };
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -106,17 +193,19 @@ RCT_EXPORT_METHOD(install) {
 
 - (BOOL)hasDigiaContractKeysInData:(NSDictionary<NSString *, id> *)data {
     NSString *viewId = [data[@"viewId"] isKindOfClass:[NSString class]]
-        ? [data[@"viewId"] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet]
-        : nil;
+                     ? [data[@"viewId"] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet]
+                     : nil;
     if (!viewId.length) return NO;
 
     NSString *type    = [data[@"type"]    isKindOfClass:[NSString class]] ? data[@"type"]    : nil;
     NSString *command = [data[@"command"] isKindOfClass:[NSString class]] ? data[@"command"] : nil;
 
     if (type) return YES;
-    NSString *upper = [command uppercaseString];
-    return [upper isEqualToString:kCommandShowDialog] ||
-           [upper isEqualToString:kCommandShowBottomSheet];
+    NSString *upperCommand = [command uppercaseString];
+    if ([upperCommand isEqualToString:kCommandShowDialog] ||
+        [upperCommand isEqualToString:kCommandShowBottomSheet]) return YES;
+
+    return NO;
 }
 
 - (BOOL)containsDigiaHtmlInNode:(id)node {

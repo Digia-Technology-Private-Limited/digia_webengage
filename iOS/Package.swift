@@ -10,13 +10,8 @@ import PackageDescription
 // │        from: "0.1.0"                                                        │
 // │    )                                                                        │
 // │                                                                             │
-// │  WebEngage SDK — CocoaPods only (no official SPM distribution).             │
-// │  Add to your app's Podfile BEFORE resolving SPM packages:                   │
-// │    pod 'WebEngage/Core',   '>= 6.10.0'                                      │
-// │    pod 'WEPersonalization'          # for inline slot support               │
-// │                                                                             │
-// │  Xcode merges CocoaPods framework search paths with SPM build targets,      │
-// │  so `import WebEngage` compiles correctly when both are present.            │
+// │  WebEngage SDK is fetched automatically as remote SPM binary targets.       │
+// │  No CocoaPods setup is required in the host app.                            │
 // └─────────────────────────────────────────────────────────────────────────────┘
 
 let package = Package(
@@ -25,14 +20,13 @@ let package = Package(
         .iOS(.v16),
     ],
     products: [
+        // Only DigiaEngageWebEngage is exposed. WebEngage and WEPersonalization
+        // are internal dependencies — the host app must NOT add WebEngage
+        // separately or it will cause duplicate symbol linker errors.
         .library(
             name: "DigiaEngageWebEngage",
             targets: ["DigiaEngageWebEngage"]
         ),
-        // Re-exported so the host app can `import WebEngage` directly
-        // without needing CocoaPods.
-        .library(name: "WebEngage",          targets: ["WebEngage"]),
-        .library(name: "WEPersonalization",  targets: ["WEPersonalization"]),
     ],
     dependencies: [
         // Digia Engage iOS SDK — available via Swift Package Manager.
@@ -42,10 +36,7 @@ let package = Package(
         ),
     ],
     targets: [
-        // Binary targets bundling the WebEngage CocoaPods xcframeworks so SPM
-        // can resolve `import WebEngage` / `import WEPersonalization` at build
-        // time without requiring the host app's CocoaPods paths to bleed into
-        // the package build context.
+        // WebEngage xcframeworks bundled locally.
         .binaryTarget(
             name: "WebEngage",
             path: "Frameworks/WebEngage.xcframework"

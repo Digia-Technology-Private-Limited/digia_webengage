@@ -63,9 +63,6 @@ internal final class WebEngagePayloadMapper {
                 ),
                 cepContext: buildContext(campaignId: campaignId, variationId: variationId, layoutId: layoutId)
             ))
-        } else if config.suppressionMode == .suppressAll,
-                  let forcedId = config.forcedDialogComponentId?.trimmingCharacters(in: .whitespaces).nilIfEmpty() {
-            payloads.append(buildForcedDialogPayload(campaignId: campaignId, componentId: forcedId))
         } else {
             logDebug("inapp_nudge_not_mapped campaignId=\(campaignId) reason=unsupported_or_incomplete_contract")
         }
@@ -96,13 +93,6 @@ internal final class WebEngagePayloadMapper {
         let componentId = str(customData["componentId"])
 
         guard let vid = componentId else {
-            if config.suppressionMode == .suppressAll,
-               let forcedId = config.forcedDialogComponentId?.trimmingCharacters(in: .whitespaces).nilIfEmpty() {
-                let payload = buildForcedDialogPayload(campaignId: campaignId, componentId: forcedId,
-                                                       placementKey: targetViewId)
-                logDebug("inline_map_forced_dialog campaignId=\(campaignId) targetViewId=\(targetViewId)")
-                return payload
-            }
             logDebug("inline_map_dropped campaignId=\(campaignId) targetViewId=\(targetViewId) reason=missing_componentId")
             return nil
         }
@@ -142,26 +132,6 @@ internal final class WebEngagePayloadMapper {
         if let v = variationId { ctx["variationId"] = v }
         if let l = layoutId   { ctx["layoutId"] = l }
         return ctx
-    }
-
-    private func buildForcedDialogPayload(
-        campaignId: String,
-        componentId: String,
-        placementKey: String? = nil
-    ) -> InAppPayload {
-        let id = placementKey.map { "\(campaignId):\($0):forced_dialog" } ?? "\(campaignId):forced_dialog"
-        return InAppPayload(
-            id: id,
-            content: InAppPayloadContent(
-                type: "dialog",
-                placementKey: placementKey,
-                viewId: componentId,
-                command: "SHOW_DIALOG",
-                args: [:],
-                screenId: nil
-            ),
-            cepContext: ["experimentId": campaignId, "campaignId": campaignId]
-        )
     }
 
     private func contentType(forCommand command: String) -> String {
