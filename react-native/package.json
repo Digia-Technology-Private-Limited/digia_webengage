@@ -1,6 +1,6 @@
 {
     "name": "@digia-engage/webengage",
-    "version": "1.0.0-beta.1",
+    "version": "1.0.0-beta.2",
     "description": "Digia Engage CEP plugin for WebEngage — bridges WebEngage in-app campaigns into Digia's rendering engine for React Native.",
     "main": "src/index.ts",
     "types": "src/index.ts",
@@ -23,7 +23,8 @@
         "lib",
         "android",
         "ios",
-        "react-native.config.js"
+        "react-native.config.js",
+        "DigiaWebEngage.podspec"
     ],
     "react-native": "lib/index.js",
     "source": "src/index.ts",
