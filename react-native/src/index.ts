@@ -31,4 +31,4 @@ export { WebEngagePayloadMapper } from './WebEngagePayloadMapper';
 export { WebEngageEventBridge } from './WebEngageEventBridge';
 
 // Main plugin — primary entry point
-export { WebEngagePlugin } from './WebEngagePlugin';
+export { DigiaWebEngagePlugin } from './WebEngagePlugin';

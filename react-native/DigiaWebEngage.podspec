@@ -10,7 +10,8 @@ Pod::Spec.new do |s|
   s.source_files = 'ios/**/*.{h,m}'
   s.public_header_files = 'ios/WEDigiaSuppressProxy.h'
   s.header_dir   = 'DigiaWebEngage'
-  s.platform     = :ios, '15.1'
+  s.platform     = :ios, '17.0'
+  s.ios.deployment_target = '17.0'
   s.requires_arc = true
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES' }
   s.dependency 'React-Core'

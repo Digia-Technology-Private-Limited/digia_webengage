@@ -8,7 +8,6 @@ import type { WebEngageBridge } from './WebEngageBridge';
 import { WebEngageSdkBridge } from './WebEngageBridge';
 import { WebEngagePayloadMapper } from './WebEngagePayloadMapper';
 import { WebEngageEventBridge } from './WebEngageEventBridge';
-import type { WebEngagePluginConfig } from './config';
 
 /**
  * WebEngage CEP plugin implementation for Digia React Native SDK.
@@ -31,7 +30,7 @@ import type { WebEngagePluginConfig } from './config';
  * channel, call {@link notifyEvent} manually with a fabricated
  * {@link InAppPayload} whose `content.type` is `'inline'`.
  */
-export class WebEngagePlugin implements DigiaCEPPlugin {
+export class DigiaWebEngagePlugin implements DigiaCEPPlugin {
     readonly identifier = 'webengage';
 
     private readonly _bridge: WebEngageBridge;
@@ -39,13 +38,8 @@ export class WebEngagePlugin implements DigiaCEPPlugin {
     private readonly _events: WebEngageEventBridge;
     private _delegate: DigiaCEPDelegate | null = null;
 
-    constructor(options: {
-        /** Inject a custom bridge — useful for testing. */
-        bridge?: WebEngageBridge;
-        /** Configuration overrides (merged with {@link defaultConfig}). */
-        config?: Partial<WebEngagePluginConfig>;
-    } = {}) {
-        this._bridge = options.bridge ?? new WebEngageSdkBridge();
+    constructor() {
+        this._bridge = new WebEngageSdkBridge();
         this._mapper = new WebEngagePayloadMapper();
         this._events = new WebEngageEventBridge(this._bridge);
     }
