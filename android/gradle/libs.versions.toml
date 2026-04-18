@@ -1,6 +1,6 @@
 [versions]
 agp = "8.11.2"
-engage = "1.0.0-beta.02"
+engage = "1.0.0"
 kotlin = "2.0.21"
 webengage_sdk = "4.17.0"
 webengage_personalization = "1.3.0"
